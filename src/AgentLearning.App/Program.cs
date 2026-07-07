@@ -1,11 +1,10 @@
+using AgentLearning.App;
 using AgentLearning.Core;
-using AgentLearning.Core.Diagnostics;
 using AgentLearning.Core.Skills;
 using AgentLearning.Core.Workflow;
 using OpenAI;
 using OpenAI.Chat;
 using System.ClientModel;
-using System.Text;
 using System.Text.Json;
 
 // AppContext.BaseDirectory 指向编译后的运行目录。
@@ -51,6 +50,16 @@ AgentSkillRegistry skillRegistry = new([
     new CalculatorSkill()
 ]);
 
+AgentRunner agentRunner = new(profile, client, memory, memoryPath, skillRegistry);
+agentRunner.WorkflowStepCreated += step =>
+{
+    if (profile.ShowWorkflowTrace)
+    {
+        Console.WriteLine(AgentWorkflowStepFormatter.Format(step));
+    }
+};
+agentRunner.DebugMessageCreated += Console.Write;
+
 Console.WriteLine($"Loaded agent: {profile.Name}");
 Console.WriteLine($"Wire API: {profile.WireApi}");
 Console.WriteLine($"Base URL: {profile.BaseUrl}");
@@ -89,53 +98,19 @@ while (true)
         continue;
     }
 
-    if (await TryRunLocalSkillCommandAsync(input, profile, memory, skillRegistry))
+    if (await TryRunLocalSkillCommandAsync(input, profile, memory, memoryPath, skillRegistry))
     {
-        await ChatMemoryStore.SaveAsync(memoryPath, memory);
         Console.WriteLine();
         continue;
     }
 
-    // 先把用户消息写进记忆，再把完整记忆发给模型。
-    memory.AddUserMessage(input);
-    AgentWorkflowTrace workflowTrace = new();
-    PrintWorkflowStep(profile, workflowTrace.Add(
-        AgentWorkflowStepKind.ReceiveInput,
-        "Receive user input",
-        "User message was saved to memory."));
-
     try
     {
-        // 完整记忆仍然保存在 memory 里；这里取最近 N 条作为本次请求上下文。
-        IReadOnlyList<ChatTurn> contextTurns = ChatMemoryWindow.GetRecentTurns(memory, profile.MaxMemoryTurns);
-        PrintWorkflowStep(profile, workflowTrace.Add(
-            AgentWorkflowStepKind.BuildContext,
-            "Build context window",
-            $"Sending {contextTurns.Count} of {memory.Turns.Count} memory turns."));
-
-        List<ChatMessage> messages = BuildMessages(profile, contextTurns);
-        List<AgentDebugMessage> debugMessages = BuildDebugMessages(profile, contextTurns);
-        string assistantReply = profile.Stream
-            ? await CompleteStreamingAsync(client, profile, messages)
-            : await CompleteOnceAsync(client, profile, messages, debugMessages, skillRegistry, workflowTrace);
-
-        if (string.IsNullOrWhiteSpace(assistantReply))
-        {
-            throw new InvalidOperationException("The model returned no text content.");
-        }
-
-        PrintWorkflowStep(profile, workflowTrace.Add(
-            AgentWorkflowStepKind.Finish,
-            "Finish",
-            "Final answer was produced."));
-
-        // 把 Agent 的回复也写进记忆，这样下一轮提问时模型能看到上下文。
-        memory.AddAssistantMessage(assistantReply);
-        await ChatMemoryStore.SaveAsync(memoryPath, memory);
+        AgentRunResult result = await agentRunner.RunAsync(input);
 
         if (!profile.Stream)
         {
-            Console.WriteLine($"{profile.Name}> {assistantReply}");
+            Console.WriteLine($"{profile.Name}> {result.AssistantReply}");
         }
 
         Console.WriteLine();
@@ -149,77 +124,11 @@ while (true)
 
 return 0;
 
-static async Task<string> CompleteOnceAsync(
-    ChatClient client,
-    AgentProfile profile,
-    List<ChatMessage> messages,
-    List<AgentDebugMessage> debugMessages,
-    AgentSkillRegistry skillRegistry,
-    AgentWorkflowTrace workflowTrace)
-{
-    // 这对应 curl 里的 "stream": false。
-    // native_tool_calling 打开时，会把本地技能声明成 tools 发给模型。
-    ChatCompletionOptions? options = profile.NativeToolCalling
-        ? BuildChatOptions(skillRegistry)
-        : null;
-
-    int requestNumber = 1;
-    while (true)
-    {
-        PrintWorkflowStep(profile, workflowTrace.Add(
-            AgentWorkflowStepKind.AskModel,
-            "Ask model",
-            $"Request #{requestNumber} sent to the model."));
-
-        PrintChatRequestPreview(profile, debugMessages, skillRegistry, requestNumber);
-        ChatCompletion completion = await client.CompleteChatAsync(messages, options);
-        PrintChatResponsePreview(profile, completion);
-
-        // 有些 OpenAI-compatible Router 会返回 tool_calls，但 finish_reason 仍然是 stop。
-        // 所以这里优先看 ToolCalls 本身，避免漏掉真正的工具调用请求。
-        if (completion.ToolCalls.Count > 0)
-        {
-            if (!profile.NativeToolCalling)
-            {
-                throw new InvalidOperationException("The model returned tool calls, but native tool calling is disabled.");
-            }
-
-            await ResolveToolCallsAsync(messages, debugMessages, completion, skillRegistry, profile, workflowTrace);
-            requestNumber++;
-            continue;
-        }
-
-        switch (completion.FinishReason)
-        {
-            case ChatFinishReason.Stop:
-                return completion.Content.Count > 0
-                    ? completion.Content[0].Text
-                    : string.Empty;
-
-            case ChatFinishReason.ToolCalls:
-                await ResolveToolCallsAsync(messages, debugMessages, completion, skillRegistry, profile, workflowTrace);
-                requestNumber++;
-                break;
-
-            case ChatFinishReason.Length:
-                throw new InvalidOperationException("Model output was cut off because it reached the token limit.");
-
-            case ChatFinishReason.ContentFilter:
-                throw new InvalidOperationException("Model output was blocked by the content filter.");
-
-            case ChatFinishReason.FunctionCall:
-                throw new InvalidOperationException("Deprecated function_call was returned. Use tool_calls instead.");
-
-            default:
-                throw new InvalidOperationException($"Unsupported finish reason: {completion.FinishReason}");
-        }
-    }
-}
-
 static async Task<bool> TryRunLocalSkillCommandAsync(
     string input,
     AgentProfile profile,
     ChatMemory memory,
+    string memoryPath,
     AgentSkillRegistry skillRegistry)
 {
     if (input.Equals("/time", StringComparison.OrdinalIgnoreCase))
@@ -227,6 +136,7 @@ static async Task<bool> TryRunLocalSkillCommandAsync(
         string result = await skillRegistry.ExecuteAsync("get_current_time", "{}");
         memory.AddUserMessage(input);
         memory.AddAssistantMessage(result);
+        await ChatMemoryStore.SaveAsync(memoryPath, memory);
         Console.WriteLine($"{profile.Name}> {result}");
         return true;
     }
@@ -240,251 +150,10 @@ static async Task<bool> TryRunLocalSkillCommandAsync(
 
         memory.AddUserMessage(input);
         memory.AddAssistantMessage(result);
+        await ChatMemoryStore.SaveAsync(memoryPath, memory);
         Console.WriteLine($"{profile.Name}> {result}");
         return true;
     }
 
     return false;
-}
-
-static async Task<string> CompleteStreamingAsync(
-    ChatClient client,
-    AgentProfile profile,
-    List<ChatMessage> messages)
-{
-    // 这对应 curl 里的 "stream": true。
-    // 模型会一小段一小段返回文本，所以我们边收到边打印。
-    StringBuilder fullReply = new();
-    Console.Write($"{profile.Name}> ");
-
-    await foreach (StreamingChatCompletionUpdate update in client.CompleteChatStreamingAsync(messages))
-    {
-        if (update.ContentUpdate.Count == 0)
-        {
-            continue;
-        }
-
-        string text = update.ContentUpdate[0].Text;
-        fullReply.Append(text);
-        Console.Write(text);
-    }
-
-    Console.WriteLine();
-    return fullReply.ToString();
-}
-
-static List<ChatMessage> BuildMessages(AgentProfile profile, IReadOnlyList<ChatTurn> contextTurns)
-{
-    List<ChatMessage> messages =
-    [
-        // system message 是角色设定：它告诉模型“你是谁、该怎么回答”。
-        new SystemChatMessage(BuildSystemInstructions(profile))
-    ];
-
-    // 把当前会话的短期记忆按顺序交给模型。
-    // 顺序非常重要：模型是按上下文从前往后理解对话的。
-    foreach (ChatTurn turn in contextTurns)
-    {
-        messages.Add(turn.Role switch
-        {
-            ChatRole.User => new UserChatMessage(turn.Content),
-            ChatRole.Assistant => new AssistantChatMessage(turn.Content),
-            _ => throw new InvalidOperationException($"Unsupported chat role: {turn.Role}")
-        });
-    }
-
-    return messages;
-}
-
-static List<AgentDebugMessage> BuildDebugMessages(AgentProfile profile, IReadOnlyList<ChatTurn> contextTurns)
-{
-    List<AgentDebugMessage> messages =
-    [
-        // 这是调试视图里的 system message，内容和真正发给模型的系统指令保持一致。
-        new()
-        {
-            Role = "system",
-            Content = BuildSystemInstructions(profile)
-        }
-    ];
-
-    foreach (ChatTurn turn in contextTurns)
-    {
-        messages.Add(turn.Role switch
-        {
-            ChatRole.User => new AgentDebugMessage
-            {
-                Role = "user",
-                Content = turn.Content
-            },
-            ChatRole.Assistant => new AgentDebugMessage
-            {
-                Role = "assistant",
-                Content = turn.Content
-            },
-            _ => throw new InvalidOperationException($"Unsupported chat role: {turn.Role}")
-        });
-    }
-
-    return messages;
-}
-
-static ChatCompletionOptions BuildChatOptions(AgentSkillRegistry skillRegistry)
-{
-    ChatCompletionOptions options = new();
-
-    foreach (IAgentSkill skill in skillRegistry.Skills)
-    {
-        options.Tools.Add(ChatTool.CreateFunctionTool(
-            functionName: skill.Name,
-            functionDescription: skill.Description,
-            functionParameters: BinaryData.FromString(skill.ParametersJson)));
-    }
-
-    return options;
-}
-
-static async Task ResolveToolCallsAsync(
-    List<ChatMessage> messages,
-    List<AgentDebugMessage> debugMessages,
-    ChatCompletion completion,
-    AgentSkillRegistry skillRegistry,
-    AgentProfile profile,
-    AgentWorkflowTrace workflowTrace)
-{
-    // 先把“模型要求调用工具”这条 assistant 消息加入上下文。
-    // SDK 会保留 tool_call_id，下一条 ToolChatMessage 才能和它对上。
-    messages.Add(new AssistantChatMessage(completion));
-    debugMessages.Add(new AgentDebugMessage
-    {
-        Role = "assistant",
-        ToolCalls = completion.ToolCalls
-            .Select(toolCall => new AgentDebugToolCall(
-                toolCall.Id,
-                toolCall.FunctionName,
-                toolCall.FunctionArguments.ToString()))
-            .ToArray()
-    });
-
-    foreach (ChatToolCall toolCall in completion.ToolCalls)
-    {
-        PrintWorkflowStep(profile, workflowTrace.Add(
-            AgentWorkflowStepKind.ToolRequested,
-            "Act",
-            $"Model requested tool '{toolCall.FunctionName}'."));
-
-        string result = await skillRegistry.ExecuteAsync(
-            toolCall.FunctionName,
-            toolCall.FunctionArguments.ToString());
-
-        PrintWorkflowStep(profile, workflowTrace.Add(
-            AgentWorkflowStepKind.ToolExecuted,
-            "Observe",
-            $"Tool '{toolCall.FunctionName}' returned: {result}"));
-
-        PrintToolResultPreview(profile, toolCall, result);
-
-        // 这条消息相当于告诉模型：你刚才要的工具结果在这里。
-        messages.Add(new ToolChatMessage(toolCall.Id, result));
-        debugMessages.Add(new AgentDebugMessage
-        {
-            Role = "tool",
-            ToolCallId = toolCall.Id,
-            Content = result
-        });
-    }
-}
-
-static void PrintWorkflowStep(AgentProfile profile, AgentWorkflowStep step)
-{
-    if (!profile.ShowWorkflowTrace)
-    {
-        return;
-    }
-
-    Console.WriteLine(AgentWorkflowStepFormatter.Format(step));
-}
-
-static void PrintChatRequestPreview(
-    AgentProfile profile,
-    List<AgentDebugMessage> debugMessages,
-    AgentSkillRegistry skillRegistry,
-    int requestNumber)
-{
-    if (!profile.ShowDebugRequests)
-    {
-        return;
-    }
-
-    Console.WriteLine();
-    Console.WriteLine($"--- Debug request body preview #{requestNumber} ---");
-    Console.WriteLine(AgentDebugPreviewBuilder.BuildChatCompletionsRequestPreview(
-        model: profile.Model,
-        stream: profile.Stream,
-        messages: debugMessages,
-        skills: skillRegistry.Skills,
-        includeTools: profile.NativeToolCalling));
-    Console.WriteLine("--- End debug request body preview ---");
-    Console.WriteLine();
-}
-
-static void PrintChatResponsePreview(AgentProfile profile, ChatCompletion completion)
-{
-    if (!profile.ShowDebugRequests)
-    {
-        return;
-    }
-
-    Console.WriteLine("--- Debug model response preview ---");
-    Console.WriteLine($"finish_reason: {completion.FinishReason}");
-
-    if (completion.ToolCalls.Count > 0)
-    {
-        foreach (ChatToolCall toolCall in completion.ToolCalls)
-        {
-            Console.WriteLine($"tool_call_id: {toolCall.Id}");
-            Console.WriteLine($"tool_name: {toolCall.FunctionName}");
-            Console.WriteLine($"tool_arguments: {AgentDebugPreviewBuilder.RedactSensitiveValues(toolCall.FunctionArguments.ToString())}");
-        }
-    }
-    else if (completion.Content.Count > 0)
-    {
-        Console.WriteLine($"content: {AgentDebugPreviewBuilder.RedactSensitiveValues(string.Concat(completion.Content.Select(part => part.Text)))}");
-    }
-    else
-    {
-        Console.WriteLine("content: <empty>");
-    }
-
-    Console.WriteLine("--- End debug model response preview ---");
-    Console.WriteLine();
-}
-
-static void PrintToolResultPreview(AgentProfile profile, ChatToolCall toolCall, string result)
-{
-    if (!profile.ShowDebugRequests)
-    {
-        return;
-    }
-
-    Console.WriteLine("--- Debug local tool result ---");
-    Console.WriteLine($"tool_call_id: {toolCall.Id}");
-    Console.WriteLine($"tool_name: {toolCall.FunctionName}");
-    Console.WriteLine($"result: {AgentDebugPreviewBuilder.RedactSensitiveValues(result)}");
-    Console.WriteLine("--- End debug local tool result ---");
-    Console.WriteLine();
-}
-
-static string BuildSystemInstructions(AgentProfile profile)
-{
-    // 这里把 agent.json 里的 description 和 instructions 组合成真正发给模型的系统指令。
-    return $"""
-    You are {profile.Name}.
-
-    Description:
-    {profile.Description}
-
-    Instructions:
-    {profile.Instructions}
-    """;
 }
