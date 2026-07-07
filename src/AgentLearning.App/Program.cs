@@ -37,8 +37,11 @@ ChatClient client = new(
         Endpoint = new Uri(profile.BaseUrl)
     });
 
-// 第一版记忆只存在内存里：程序关掉后会消失。
-ChatMemory memory = new();
+// memory_file 可以写相对路径；这里把它解析成真正使用的文件路径。
+string memoryPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, profile.MemoryFile);
+
+// 现在记忆会从本地 JSON 文件恢复；文件不存在时得到一个空记忆。
+ChatMemory memory = await ChatMemoryStore.LoadAsync(memoryPath);
 
 // 注册当前 Agent 可以使用的技能。
 // 这一步只是把 C# 函数准备好，真正什么时候调用由模型决定。
@@ -53,6 +56,8 @@ Console.WriteLine($"Base URL: {profile.BaseUrl}");
 Console.WriteLine($"Stream: {profile.Stream}");
 Console.WriteLine($"Native tool calling: {profile.NativeToolCalling}");
 Console.WriteLine($"Show debug requests: {profile.ShowDebugRequests}");
+Console.WriteLine($"Memory file: {memoryPath}");
+Console.WriteLine($"Loaded memory turns: {memory.Turns.Count}");
 Console.WriteLine($"Skills: {string.Join(", ", skillRegistry.Skills.Select(skill => skill.Name))}");
 Console.WriteLine("Type a message and press Enter. Type 'exit' to quit.");
 Console.WriteLine("Local skill commands: /time, /calc <expression>");
@@ -83,6 +88,7 @@ while (true)
 
     if (await TryRunLocalSkillCommandAsync(input, profile, memory, skillRegistry))
     {
+        await ChatMemoryStore.SaveAsync(memoryPath, memory);
         Console.WriteLine();
         continue;
     }
@@ -105,6 +111,7 @@ while (true)
 
         // 把 Agent 的回复也写进记忆，这样下一轮提问时模型能看到上下文。
         memory.AddAssistantMessage(assistantReply);
+        await ChatMemoryStore.SaveAsync(memoryPath, memory);
 
         if (!profile.Stream)
         {

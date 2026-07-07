@@ -95,6 +95,7 @@ public static class AgentProfileLoader
         RequireValue(profile.BaseUrl, "base_url");
         RequireValue(profile.EnvKey, "env_key");
         RequireValue(profile.WireApi, "wire_api");
+        RequireValue(profile.MemoryFile, "memory_file");
         RequireValue(profile.Description, "description");
         RequireValue(profile.Instructions, "instructions");
 

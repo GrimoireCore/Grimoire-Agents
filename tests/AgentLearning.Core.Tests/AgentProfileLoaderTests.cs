@@ -20,6 +20,7 @@ public sealed class AgentProfileLoaderTests
               "stream": false,
               "native_tool_calling": false,
               "show_debug_requests": true,
+              "memory_file": "memory/chat-memory.json",
               "api_key": null,
               "description": "A patient C# agent teacher.",
               "instructions": "Teach one concept at a time."
@@ -38,6 +39,7 @@ public sealed class AgentProfileLoaderTests
             Assert.False(profile.Stream);
             Assert.False(profile.NativeToolCalling);
             Assert.True(profile.ShowDebugRequests);
+            Assert.Equal("memory/chat-memory.json", profile.MemoryFile);
             Assert.Null(profile.ApiKey);
             Assert.Equal("A patient C# agent teacher.", profile.Description);
             Assert.Equal("Teach one concept at a time.", profile.Instructions);
@@ -64,6 +66,9 @@ public sealed class AgentProfileLoaderTests
               "env_key": "GRIMOIRE_API_KEY",
               "wire_api": "chat_completions",
               "stream": false,
+              "native_tool_calling": false,
+              "show_debug_requests": false,
+              "memory_file": "memory/chat-memory.json",
               "description": "A patient C# agent teacher.",
               "instructions": "Teach one concept at a time."
             }

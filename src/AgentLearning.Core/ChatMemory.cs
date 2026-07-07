@@ -1,8 +1,8 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 第一版短期记忆：只保存当前程序运行期间的对话。
-/// 程序退出后记忆会消失，后面课程再升级成 JSON 或 SQLite 持久化。
+/// 当前会话里的对话记忆。
+/// 它只负责在内存中维护顺序；是否保存到文件由 ChatMemoryStore 负责。
 /// </summary>
 public sealed class ChatMemory
 {

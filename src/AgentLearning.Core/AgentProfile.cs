@@ -37,6 +37,10 @@ public sealed record AgentProfile(
     [property: JsonPropertyName("show_debug_requests")]
     bool ShowDebugRequests,
 
+    /// <summary>聊天记忆保存到哪里。相对路径会基于程序运行目录计算。</summary>
+    [property: JsonPropertyName("memory_file")]
+    string MemoryFile,
+
     /// <summary>本地 API Key。建议只放在 agent.local.json，不要放在主配置里。</summary>
     [property: JsonPropertyName("api_key")]
     string? ApiKey,
