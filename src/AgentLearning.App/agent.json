@@ -7,7 +7,9 @@
   "stream": false,
   "native_tool_calling": true,
   "show_debug_requests": true,
+  "show_workflow_trace": true,
   "memory_file": "memory/chat-memory.json",
+  "max_memory_turns": 6,
   "description": "A patient C# agent teacher for a beginner learning how agents work.",
   "instructions": "Teach one concept at a time. Prefer small examples. Explain why each piece exists before adding the next piece."
 }

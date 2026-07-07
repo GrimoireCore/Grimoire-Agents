@@ -20,7 +20,9 @@ public sealed class AgentProfileLoaderTests
               "stream": false,
               "native_tool_calling": false,
               "show_debug_requests": true,
+              "show_workflow_trace": true,
               "memory_file": "memory/chat-memory.json",
+              "max_memory_turns": 6,
               "api_key": null,
               "description": "A patient C# agent teacher.",
               "instructions": "Teach one concept at a time."
@@ -39,7 +41,9 @@ public sealed class AgentProfileLoaderTests
             Assert.False(profile.Stream);
             Assert.False(profile.NativeToolCalling);
             Assert.True(profile.ShowDebugRequests);
+            Assert.True(profile.ShowWorkflowTrace);
             Assert.Equal("memory/chat-memory.json", profile.MemoryFile);
+            Assert.Equal(6, profile.MaxMemoryTurns);
             Assert.Null(profile.ApiKey);
             Assert.Equal("A patient C# agent teacher.", profile.Description);
             Assert.Equal("Teach one concept at a time.", profile.Instructions);
@@ -68,7 +72,9 @@ public sealed class AgentProfileLoaderTests
               "stream": false,
               "native_tool_calling": false,
               "show_debug_requests": false,
+              "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
+              "max_memory_turns": 6,
               "description": "A patient C# agent teacher.",
               "instructions": "Teach one concept at a time."
             }

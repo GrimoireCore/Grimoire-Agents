@@ -1,6 +1,7 @@
 using AgentLearning.Core;
 using AgentLearning.Core.Diagnostics;
 using AgentLearning.Core.Skills;
+using AgentLearning.Core.Workflow;
 using OpenAI;
 using OpenAI.Chat;
 using System.ClientModel;
@@ -56,8 +57,10 @@ Console.WriteLine($"Base URL: {profile.BaseUrl}");
 Console.WriteLine($"Stream: {profile.Stream}");
 Console.WriteLine($"Native tool calling: {profile.NativeToolCalling}");
 Console.WriteLine($"Show debug requests: {profile.ShowDebugRequests}");
+Console.WriteLine($"Show workflow trace: {profile.ShowWorkflowTrace}");
 Console.WriteLine($"Memory file: {memoryPath}");
 Console.WriteLine($"Loaded memory turns: {memory.Turns.Count}");
+Console.WriteLine($"Max memory turns sent: {profile.MaxMemoryTurns}");
 Console.WriteLine($"Skills: {string.Join(", ", skillRegistry.Skills.Select(skill => skill.Name))}");
 Console.WriteLine("Type a message and press Enter. Type 'exit' to quit.");
 Console.WriteLine("Local skill commands: /time, /calc <expression>");
@@ -95,19 +98,36 @@ while (true)
 
     // 先把用户消息写进记忆，再把完整记忆发给模型。
     memory.AddUserMessage(input);
+    AgentWorkflowTrace workflowTrace = new();
+    PrintWorkflowStep(profile, workflowTrace.Add(
+        AgentWorkflowStepKind.ReceiveInput,
+        "Receive user input",
+        "User message was saved to memory."));
 
     try
     {
-        List<ChatMessage> messages = BuildMessages(profile, memory);
-        List<AgentDebugMessage> debugMessages = BuildDebugMessages(profile, memory);
+        // 完整记忆仍然保存在 memory 里；这里取最近 N 条作为本次请求上下文。
+        IReadOnlyList<ChatTurn> contextTurns = ChatMemoryWindow.GetRecentTurns(memory, profile.MaxMemoryTurns);
+        PrintWorkflowStep(profile, workflowTrace.Add(
+            AgentWorkflowStepKind.BuildContext,
+            "Build context window",
+            $"Sending {contextTurns.Count} of {memory.Turns.Count} memory turns."));
+
+        List<ChatMessage> messages = BuildMessages(profile, contextTurns);
+        List<AgentDebugMessage> debugMessages = BuildDebugMessages(profile, contextTurns);
         string assistantReply = profile.Stream
             ? await CompleteStreamingAsync(client, profile, messages)
-            : await CompleteOnceAsync(client, profile, messages, debugMessages, skillRegistry);
+            : await CompleteOnceAsync(client, profile, messages, debugMessages, skillRegistry, workflowTrace);
 
         if (string.IsNullOrWhiteSpace(assistantReply))
         {
             throw new InvalidOperationException("The model returned no text content.");
         }
+
+        PrintWorkflowStep(profile, workflowTrace.Add(
+            AgentWorkflowStepKind.Finish,
+            "Finish",
+            "Final answer was produced."));
 
         // 把 Agent 的回复也写进记忆，这样下一轮提问时模型能看到上下文。
         memory.AddAssistantMessage(assistantReply);
@@ -134,7 +154,8 @@ static async Task<string> CompleteOnceAsync(
     AgentProfile profile,
     List<ChatMessage> messages,
     List<AgentDebugMessage> debugMessages,
-    AgentSkillRegistry skillRegistry)
+    AgentSkillRegistry skillRegistry,
+    AgentWorkflowTrace workflowTrace)
 {
     // 这对应 curl 里的 "stream": false。
     // native_tool_calling 打开时，会把本地技能声明成 tools 发给模型。
@@ -145,6 +166,11 @@ static async Task<string> CompleteOnceAsync(
     int requestNumber = 1;
     while (true)
     {
+        PrintWorkflowStep(profile, workflowTrace.Add(
+            AgentWorkflowStepKind.AskModel,
+            "Ask model",
+            $"Request #{requestNumber} sent to the model."));
+
         PrintChatRequestPreview(profile, debugMessages, skillRegistry, requestNumber);
         ChatCompletion completion = await client.CompleteChatAsync(messages, options);
         PrintChatResponsePreview(profile, completion);
@@ -158,7 +184,7 @@ static async Task<string> CompleteOnceAsync(
                 throw new InvalidOperationException("The model returned tool calls, but native tool calling is disabled.");
             }
 
-            await ResolveToolCallsAsync(messages, debugMessages, completion, skillRegistry, profile);
+            await ResolveToolCallsAsync(messages, debugMessages, completion, skillRegistry, profile, workflowTrace);
             requestNumber++;
             continue;
         }
@@ -171,7 +197,7 @@ static async Task<string> CompleteOnceAsync(
                     : string.Empty;
 
             case ChatFinishReason.ToolCalls:
-                await ResolveToolCallsAsync(messages, debugMessages, completion, skillRegistry, profile);
+                await ResolveToolCallsAsync(messages, debugMessages, completion, skillRegistry, profile, workflowTrace);
                 requestNumber++;
                 break;
 
@@ -247,7 +273,7 @@ static async Task<string> CompleteStreamingAsync(
     return fullReply.ToString();
 }
 
-static List<ChatMessage> BuildMessages(AgentProfile profile, ChatMemory memory)
+static List<ChatMessage> BuildMessages(AgentProfile profile, IReadOnlyList<ChatTurn> contextTurns)
 {
     List<ChatMessage> messages =
     [
@@ -257,7 +283,7 @@ static List<ChatMessage> BuildMessages(AgentProfile profile, ChatMemory memory)
 
     // 把当前会话的短期记忆按顺序交给模型。
     // 顺序非常重要：模型是按上下文从前往后理解对话的。
-    foreach (ChatTurn turn in memory.Turns)
+    foreach (ChatTurn turn in contextTurns)
     {
         messages.Add(turn.Role switch
         {
@@ -270,7 +296,7 @@ static List<ChatMessage> BuildMessages(AgentProfile profile, ChatMemory memory)
     return messages;
 }
 
-static List<AgentDebugMessage> BuildDebugMessages(AgentProfile profile, ChatMemory memory)
+static List<AgentDebugMessage> BuildDebugMessages(AgentProfile profile, IReadOnlyList<ChatTurn> contextTurns)
 {
     List<AgentDebugMessage> messages =
     [
@@ -282,7 +308,7 @@ static List<AgentDebugMessage> BuildDebugMessages(AgentProfile profile, ChatMemo
         }
     ];
 
-    foreach (ChatTurn turn in memory.Turns)
+    foreach (ChatTurn turn in contextTurns)
     {
         messages.Add(turn.Role switch
         {
@@ -323,7 +349,8 @@ static async Task ResolveToolCallsAsync(
     List<AgentDebugMessage> debugMessages,
     ChatCompletion completion,
     AgentSkillRegistry skillRegistry,
-    AgentProfile profile)
+    AgentProfile profile,
+    AgentWorkflowTrace workflowTrace)
 {
     // 先把“模型要求调用工具”这条 assistant 消息加入上下文。
     // SDK 会保留 tool_call_id，下一条 ToolChatMessage 才能和它对上。
@@ -341,9 +368,19 @@ static async Task ResolveToolCallsAsync(
 
     foreach (ChatToolCall toolCall in completion.ToolCalls)
     {
+        PrintWorkflowStep(profile, workflowTrace.Add(
+            AgentWorkflowStepKind.ToolRequested,
+            "Act",
+            $"Model requested tool '{toolCall.FunctionName}'."));
+
         string result = await skillRegistry.ExecuteAsync(
             toolCall.FunctionName,
             toolCall.FunctionArguments.ToString());
+
+        PrintWorkflowStep(profile, workflowTrace.Add(
+            AgentWorkflowStepKind.ToolExecuted,
+            "Observe",
+            $"Tool '{toolCall.FunctionName}' returned: {result}"));
 
         PrintToolResultPreview(profile, toolCall, result);
 
@@ -356,6 +393,16 @@ static async Task ResolveToolCallsAsync(
             Content = result
         });
     }
+}
+
+static void PrintWorkflowStep(AgentProfile profile, AgentWorkflowStep step)
+{
+    if (!profile.ShowWorkflowTrace)
+    {
+        return;
+    }
+
+    Console.WriteLine(AgentWorkflowStepFormatter.Format(step));
 }
 
 static void PrintChatRequestPreview(

@@ -104,6 +104,11 @@ public static class AgentProfileLoader
             throw new InvalidOperationException("Agent profile field 'base_url' must be an absolute URL.");
         }
 
+        if (profile.MaxMemoryTurns <= 0)
+        {
+            throw new InvalidOperationException("Agent profile field 'max_memory_turns' must be greater than zero.");
+        }
+
         if (!profile.WireApi.Equals("chat_completions", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("Only wire_api = 'chat_completions' is supported in this lesson.");

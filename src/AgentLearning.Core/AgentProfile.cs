@@ -37,9 +37,17 @@ public sealed record AgentProfile(
     [property: JsonPropertyName("show_debug_requests")]
     bool ShowDebugRequests,
 
+    /// <summary>是否打印 Agent 工作流步骤，方便观察 ReAct 循环。</summary>
+    [property: JsonPropertyName("show_workflow_trace")]
+    bool ShowWorkflowTrace,
+
     /// <summary>聊天记忆保存到哪里。相对路径会基于程序运行目录计算。</summary>
     [property: JsonPropertyName("memory_file")]
     string MemoryFile,
+
+    /// <summary>每次请求最多发送多少条历史消息给模型，用来控制上下文大小。</summary>
+    [property: JsonPropertyName("max_memory_turns")]
+    int MaxMemoryTurns,
 
     /// <summary>本地 API Key。建议只放在 agent.local.json，不要放在主配置里。</summary>
     [property: JsonPropertyName("api_key")]
