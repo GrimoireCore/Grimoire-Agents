@@ -1,8 +1,8 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 当前会话里的对话记忆。
-/// 它只负责在内存中维护顺序；是否保存到文件由 ChatMemoryStore 负责。
+/// 当前会话里的聊天记忆。
+/// 这个类只负责在内存中维护顺序，保存到文件由 ChatMemoryStore 负责。
 /// </summary>
 public sealed class ChatMemory
 {

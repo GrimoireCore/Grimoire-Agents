@@ -4,7 +4,6 @@ namespace AgentLearning.Core;
 
 /// <summary>
 /// 负责从 JSON 文件读取 Agent 配置，并做最基本的校验。
-/// 单独拆出来是为了让“配置读取”可以被测试，而不是藏在 Program.cs 里。
 /// </summary>
 public static class AgentProfileLoader
 {
@@ -107,6 +106,11 @@ public static class AgentProfileLoader
         if (profile.MaxMemoryTurns <= 0)
         {
             throw new InvalidOperationException("Agent profile field 'max_memory_turns' must be greater than zero.");
+        }
+
+        if (profile.MaxToolIterations <= 0)
+        {
+            throw new InvalidOperationException("Agent profile field 'max_tool_iterations' must be greater than zero.");
         }
 
         if (!profile.WireApi.Equals("chat_completions", StringComparison.OrdinalIgnoreCase))

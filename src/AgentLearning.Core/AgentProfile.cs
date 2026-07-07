@@ -3,8 +3,7 @@ using System.Text.Json.Serialization;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// Agent 的角色与调用配置。
-/// 你可以把它理解成这个 Agent 的“身份证 + 接线方式”。
+/// Agent 的角色、模型接线配置，以及运行保护规则。
 /// </summary>
 public sealed record AgentProfile(
     /// <summary>Agent 的显示名称。</summary>
@@ -48,6 +47,10 @@ public sealed record AgentProfile(
     /// <summary>每次请求最多发送多少条历史消息给模型，用来控制上下文大小。</summary>
     [property: JsonPropertyName("max_memory_turns")]
     int MaxMemoryTurns,
+
+    /// <summary>一次用户请求里最多允许几轮工具调用，用来防止工具循环失控。</summary>
+    [property: JsonPropertyName("max_tool_iterations")]
+    int MaxToolIterations,
 
     /// <summary>本地 API Key。建议只放在 agent.local.json，不要放在主配置里。</summary>
     [property: JsonPropertyName("api_key")]

@@ -99,6 +99,7 @@ public sealed class AgentRunner
             ? BuildChatOptions()
             : null;
 
+        AgentToolIterationGuard toolIterationGuard = new(_profile.MaxToolIterations);
         int requestNumber = 1;
         while (true)
         {
@@ -121,6 +122,7 @@ public sealed class AgentRunner
                     throw new InvalidOperationException("The model returned tool calls, but native tool calling is disabled.");
                 }
 
+                toolIterationGuard.RecordToolIteration();
                 await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace);
                 requestNumber++;
                 continue;
@@ -134,6 +136,7 @@ public sealed class AgentRunner
                         : string.Empty;
 
                 case ChatFinishReason.ToolCalls:
+                    toolIterationGuard.RecordToolIteration();
                     await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace);
                     requestNumber++;
                     break;
