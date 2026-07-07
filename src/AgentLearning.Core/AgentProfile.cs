@@ -1,0 +1,48 @@
+using System.Text.Json.Serialization;
+
+namespace AgentLearning.Core;
+
+/// <summary>
+/// Agent 的角色与调用配置。
+/// 你可以把它理解成这个 Agent 的“身份证 + 接线方式”。
+/// </summary>
+public sealed record AgentProfile(
+    /// <summary>Agent 的显示名称。</summary>
+    string Name,
+
+    /// <summary>要调用的模型名称，由当前 Router/服务端决定可用值。</summary>
+    string Model,
+
+    /// <summary>OpenAI 兼容服务的基础地址，例如 https://router.hddev.top/v1。</summary>
+    [property: JsonPropertyName("base_url")]
+    string BaseUrl,
+
+    /// <summary>保存 API Key 的环境变量名，代码不会把密钥写死在文件里。</summary>
+    [property: JsonPropertyName("env_key")]
+    string EnvKey,
+
+    /// <summary>底层调用协议。你的 curl 示例使用 chat_completions。</summary>
+    [property: JsonPropertyName("wire_api")]
+    string WireApi,
+
+    /// <summary>是否使用流式返回。false 对应 curl 里的 "stream": false。</summary>
+    [property: JsonPropertyName("stream")]
+    bool Stream,
+
+    /// <summary>是否把技能声明为 Chat Completions 原生 tools，让模型自动选择要不要调用技能。</summary>
+    [property: JsonPropertyName("native_tool_calling")]
+    bool NativeToolCalling,
+
+    /// <summary>是否在控制台打印请求体预览，方便学习和排查 Tool Calling。</summary>
+    [property: JsonPropertyName("show_debug_requests")]
+    bool ShowDebugRequests,
+
+    /// <summary>本地 API Key。建议只放在 agent.local.json，不要放在主配置里。</summary>
+    [property: JsonPropertyName("api_key")]
+    string? ApiKey,
+
+    /// <summary>Agent 的一句话说明，方便人理解它的用途。</summary>
+    string Description,
+
+    /// <summary>Agent 的系统指令，决定它回答问题时的角色、语气和边界。</summary>
+    string Instructions);

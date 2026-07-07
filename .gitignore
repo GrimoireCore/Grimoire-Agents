@@ -1,0 +1,8 @@
+bin/
+obj/
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+src/AgentLearning.App/agent.local.json

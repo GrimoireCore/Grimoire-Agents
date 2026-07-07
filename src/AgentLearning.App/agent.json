@@ -1,0 +1,12 @@
+{
+  "name": "Grimoire Router",
+  "model": "gpt-5.4",
+  "base_url": "https://router.hddev.top/v1",
+  "env_key": "GRIMOIRE_API_KEY",
+  "wire_api": "chat_completions",
+  "stream": false,
+  "native_tool_calling": true,
+  "show_debug_requests": true,
+  "description": "A patient C# agent teacher for a beginner learning how agents work.",
+  "instructions": "Teach one concept at a time. Prefer small examples. Explain why each piece exists before adding the next piece."
+}
