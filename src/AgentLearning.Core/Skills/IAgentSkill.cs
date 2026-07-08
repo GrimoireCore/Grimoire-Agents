@@ -15,6 +15,12 @@ public interface IAgentSkill
     /// <summary>给模型看的 JSON Schema，描述这个技能需要哪些参数。</summary>
     string ParametersJson { get; }
 
+    /// <summary>技能的风险等级，Harness 会用它决定是否需要用户确认。</summary>
+    AgentSkillRiskLevel RiskLevel { get; }
+
+    /// <summary>是否无论风险等级如何，都必须先经过用户确认。</summary>
+    bool RequiresConfirmation { get; }
+
     /// <summary>
     /// 执行技能。
     /// argumentsJson 是模型按 ParametersJson 生成的参数 JSON。

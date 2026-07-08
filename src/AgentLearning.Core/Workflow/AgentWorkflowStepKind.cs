@@ -11,6 +11,8 @@ public enum AgentWorkflowStepKind
     RouteTools,
     AskModel,
     ToolRequested,
+    ToolApprovalRequested,
+    ToolRejected,
     ToolFailed,
     ToolExecuted,
     Finish

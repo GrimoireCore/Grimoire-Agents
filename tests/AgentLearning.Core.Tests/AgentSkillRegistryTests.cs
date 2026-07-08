@@ -28,4 +28,31 @@ public sealed class AgentSkillRegistryTests
 
         Assert.Equal("Unknown skill: missing_skill", exception.Message);
     }
+
+    [Fact]
+    public void GetRequiredSkill_returns_registered_skill_metadata()
+    {
+        AgentSkillRegistry registry = new([
+            new WriteNoteSkill(Path.Combine(Path.GetTempPath(), $"notes-{Guid.NewGuid():N}.md"))
+        ]);
+
+        IAgentSkill skill = registry.GetRequiredSkill("write_note");
+
+        Assert.Equal("write_note", skill.Name);
+        Assert.Equal(AgentSkillRiskLevel.Medium, skill.RiskLevel);
+        Assert.True(skill.RequiresConfirmation);
+    }
+
+    [Fact]
+    public void GetRequiredSkill_rejects_unknown_skill_name()
+    {
+        AgentSkillRegistry registry = new([
+            new CalculatorSkill()
+        ]);
+
+        AgentUnknownSkillException exception = Assert.Throws<AgentUnknownSkillException>(
+            () => registry.GetRequiredSkill("missing_skill"));
+
+        Assert.Equal("Unknown skill: missing_skill", exception.Message);
+    }
 }

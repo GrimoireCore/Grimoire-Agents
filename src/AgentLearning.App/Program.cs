@@ -1,5 +1,6 @@
 using AgentLearning.App;
 using AgentLearning.Core;
+using AgentLearning.Core.Diagnostics;
 using AgentLearning.Core.Skills;
 using AgentLearning.Core.Workflow;
 using OpenAI;
@@ -39,6 +40,7 @@ ChatClient client = new(
 
 // memory_file 可以写相对路径；这里把它解析成真正使用的文件路径。
 string memoryPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, profile.MemoryFile);
+string notesPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, "memory/agent-notes.md");
 
 // 现在记忆会从本地 JSON 文件恢复；文件不存在时得到一个空记忆。
 ChatMemory memory = await ChatMemoryStore.LoadAsync(memoryPath);
@@ -47,10 +49,12 @@ ChatMemory memory = await ChatMemoryStore.LoadAsync(memoryPath);
 // 这一步只是把 C# 函数准备好，真正什么时候调用由模型决定。
 AgentSkillRegistry skillRegistry = new([
     new TimeSkill(),
-    new CalculatorSkill()
+    new CalculatorSkill(),
+    new WriteNoteSkill(notesPath)
 ]);
 
 AgentRunner agentRunner = new(profile, client, memory, memoryPath, skillRegistry);
+agentRunner.ToolConfirmationRequestedAsync = ConfirmToolCallAsync;
 agentRunner.WorkflowStepCreated += step =>
 {
     if (profile.ShowWorkflowTrace)
@@ -70,6 +74,7 @@ Console.WriteLine($"Max tools per request: {profile.MaxToolsPerRequest}");
 Console.WriteLine($"Show debug requests: {profile.ShowDebugRequests}");
 Console.WriteLine($"Show workflow trace: {profile.ShowWorkflowTrace}");
 Console.WriteLine($"Memory file: {memoryPath}");
+Console.WriteLine($"Notes file: {notesPath}");
 Console.WriteLine($"Loaded memory turns: {memory.Turns.Count}");
 Console.WriteLine($"Max memory turns sent: {profile.MaxMemoryTurns}");
 Console.WriteLine($"Max memory content chars: {profile.MaxMemoryContentChars}");
@@ -176,4 +181,38 @@ static async Task TrySaveLocalSkillMemoryAsync(
     memory.AddUserMessage(userInput);
     memory.AddAssistantMessage(assistantReply);
     await ChatMemoryStore.SaveAsync(memoryPath, memory);
+}
+
+static Task<bool> ConfirmToolCallAsync(AgentToolConfirmationRequest request)
+{
+    Console.WriteLine();
+    Console.WriteLine("Tool confirmation required");
+    Console.WriteLine($"Tool: {request.ToolName}");
+    Console.WriteLine($"Risk: {request.RiskLevel}");
+    Console.WriteLine($"Description: {request.Description}");
+    Console.WriteLine($"Arguments: {AgentDebugPreviewBuilder.RedactSensitiveValues(request.ArgumentsJson)}");
+
+    while (true)
+    {
+        Console.Write("Allow this tool call? Type yes or no: ");
+        string? answer = Console.ReadLine();
+        if (answer is null)
+        {
+            return Task.FromResult(false);
+        }
+
+        if (answer.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+            answer.Equals("y", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(true);
+        }
+
+        if (answer.Equals("no", StringComparison.OrdinalIgnoreCase) ||
+            answer.Equals("n", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(false);
+        }
+
+        Console.WriteLine("Please type yes or no.");
+    }
 }

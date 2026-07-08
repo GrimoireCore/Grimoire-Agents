@@ -39,6 +39,9 @@ public sealed class AgentRunner
     /// <summary>创建调试文本时触发，Program.cs 可以选择打印到控制台。</summary>
     public event Action<string>? DebugMessageCreated;
 
+    /// <summary>危险工具需要用户确认时触发。返回 true 才会继续执行工具。</summary>
+    public Func<AgentToolConfirmationRequest, Task<bool>>? ToolConfirmationRequestedAsync { get; set; }
+
     /// <summary>
     /// 运行一轮 Agent。
     /// 这里是 Harness 的核心：模型可以决定调用工具，但循环边界和记忆保存由代码控制。
@@ -342,6 +345,23 @@ public sealed class AgentRunner
                 "Act",
                 $"Model requested tool '{toolCall.FunctionName}'.");
 
+            IAgentSkill skill = _skillRegistry.GetRequiredSkill(toolCall.FunctionName);
+            if (!await ConfirmToolCallIfNeededAsync(workflowTrace, skill, toolCall))
+            {
+                string rejectedResult = AgentToolApprovalObservation.BuildRejected(toolCall.FunctionName);
+                EmitToolResultPreview(toolCall, rejectedResult);
+
+                messages.Add(new ToolChatMessage(toolCall.Id, rejectedResult));
+                debugMessages.Add(new AgentDebugMessage
+                {
+                    Role = "tool",
+                    ToolCallId = toolCall.Id,
+                    Content = rejectedResult
+                });
+
+                continue;
+            }
+
             string rawResult;
             bool toolFailed = false;
             try
@@ -389,6 +409,49 @@ public sealed class AgentRunner
                 Content = result
             });
         }
+    }
+
+    private async Task<bool> ConfirmToolCallIfNeededAsync(
+        AgentWorkflowTrace workflowTrace,
+        IAgentSkill skill,
+        ChatToolCall toolCall)
+    {
+        if (!AgentToolPermissionPolicy.RequiresConfirmation(skill))
+        {
+            return true;
+        }
+
+        AddWorkflowStep(
+            workflowTrace,
+            AgentWorkflowStepKind.ToolApprovalRequested,
+            "Request tool approval",
+            $"Tool '{skill.Name}' requires confirmation. Risk: {skill.RiskLevel}.");
+
+        if (ToolConfirmationRequestedAsync is null)
+        {
+            throw new InvalidOperationException(
+                $"Tool '{skill.Name}' requires confirmation, but no confirmation handler was configured.");
+        }
+
+        AgentToolConfirmationRequest request = new(
+            ToolName: skill.Name,
+            Description: skill.Description,
+            ArgumentsJson: toolCall.FunctionArguments.ToString(),
+            RiskLevel: skill.RiskLevel);
+
+        bool approved = await ToolConfirmationRequestedAsync(request);
+        if (approved)
+        {
+            return true;
+        }
+
+        AddWorkflowStep(
+            workflowTrace,
+            AgentWorkflowStepKind.ToolRejected,
+            "Reject tool",
+            $"User rejected tool '{skill.Name}'.");
+
+        return false;
     }
 
     private List<ChatMessage> BuildMessages(IReadOnlyList<ChatTurn> contextTurns)

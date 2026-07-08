@@ -27,6 +27,10 @@ public sealed class CalculatorSkill : IAgentSkill
         }
         """;
 
+    public AgentSkillRiskLevel RiskLevel => AgentSkillRiskLevel.Low;
+
+    public bool RequiresConfirmation => false;
+
     public Task<string> ExecuteAsync(string argumentsJson, CancellationToken cancellationToken = default)
     {
         string expression = ReadExpression(argumentsJson);

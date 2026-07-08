@@ -13,4 +13,12 @@ public sealed record AgentToolCatalogItem(
 
     /// <summary>工具的短说明，帮助 Router 判断什么时候该选择它。</summary>
     [property: JsonPropertyName("description")]
-    string Description);
+    string Description,
+
+    /// <summary>工具风险等级，让 Router 知道这个工具是不是会影响外部世界。</summary>
+    [property: JsonPropertyName("risk_level")]
+    string RiskLevel,
+
+    /// <summary>这个工具执行前是否需要用户确认。</summary>
+    [property: JsonPropertyName("requires_confirmation")]
+    bool RequiresConfirmation);

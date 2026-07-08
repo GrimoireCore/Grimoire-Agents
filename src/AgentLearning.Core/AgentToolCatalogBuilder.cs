@@ -20,7 +20,11 @@ public static class AgentToolCatalogBuilder
     public static IReadOnlyList<AgentToolCatalogItem> Build(IEnumerable<IAgentSkill> skills)
     {
         return skills
-            .Select(skill => new AgentToolCatalogItem(skill.Name, skill.Description))
+            .Select(skill => new AgentToolCatalogItem(
+                skill.Name,
+                skill.Description,
+                skill.RiskLevel.ToString(),
+                AgentToolPermissionPolicy.RequiresConfirmation(skill)))
             .ToArray();
     }
 

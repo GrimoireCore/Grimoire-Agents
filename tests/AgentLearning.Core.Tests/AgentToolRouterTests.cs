@@ -9,13 +9,17 @@ public sealed class AgentToolRouterTests
     {
         AgentSkillRegistry registry = new([
             new CalculatorSkill(),
-            new TimeSkill()
+            new TimeSkill(),
+            new WriteNoteSkill(Path.Combine(Path.GetTempPath(), $"notes-{Guid.NewGuid():N}.md"))
         ]);
 
         string catalogJson = AgentToolCatalogBuilder.BuildJson(registry.Skills);
 
         Assert.Contains("\"name\": \"calculate\"", catalogJson);
+        Assert.Contains("\"name\": \"write_note\"", catalogJson);
         Assert.Contains("\"description\":", catalogJson);
+        Assert.Contains("\"risk_level\": \"Medium\"", catalogJson);
+        Assert.Contains("\"requires_confirmation\": true", catalogJson);
         Assert.DoesNotContain("parameters", catalogJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("properties", catalogJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("required", catalogJson, StringComparison.OrdinalIgnoreCase);

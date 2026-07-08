@@ -30,6 +30,10 @@ public sealed class TimeSkill : IAgentSkill
         }
         """;
 
+    public AgentSkillRiskLevel RiskLevel => AgentSkillRiskLevel.Low;
+
+    public bool RequiresConfirmation => false;
+
     public Task<string> ExecuteAsync(string argumentsJson, CancellationToken cancellationToken = default)
     {
         return Task.FromResult(_clock().ToString("O"));
