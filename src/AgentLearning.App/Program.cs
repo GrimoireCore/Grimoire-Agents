@@ -65,6 +65,8 @@ Console.WriteLine($"Wire API: {profile.WireApi}");
 Console.WriteLine($"Base URL: {profile.BaseUrl}");
 Console.WriteLine($"Stream: {profile.Stream}");
 Console.WriteLine($"Native tool calling: {profile.NativeToolCalling}");
+Console.WriteLine($"Tool router enabled: {profile.ToolRouterEnabled}");
+Console.WriteLine($"Max tools per request: {profile.MaxToolsPerRequest}");
 Console.WriteLine($"Show debug requests: {profile.ShowDebugRequests}");
 Console.WriteLine($"Show workflow trace: {profile.ShowWorkflowTrace}");
 Console.WriteLine($"Memory file: {memoryPath}");

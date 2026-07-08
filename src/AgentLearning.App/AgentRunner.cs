@@ -76,7 +76,7 @@ public sealed class AgentRunner
 
         string assistantReply = _profile.Stream
             ? await CompleteStreamingAsync(messages)
-            : await CompleteOnceAsync(messages, debugMessages, workflowTrace);
+            : await CompleteOnceAsync(userInput, messages, debugMessages, workflowTrace);
 
         if (string.IsNullOrWhiteSpace(assistantReply))
         {
@@ -101,13 +101,16 @@ public sealed class AgentRunner
     }
 
     private async Task<string> CompleteOnceAsync(
+        string userInput,
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
         AgentWorkflowTrace workflowTrace)
     {
-        // native_tool_calling 打开时，会把本地技能声明成 tools 发给模型。
-        ChatCompletionOptions? options = _profile.NativeToolCalling
-            ? BuildChatOptions()
+        // native_tool_calling 打开时，先让 AI Tool Router 从轻量目录里选工具。
+        // 主 Agent 只会收到被选中的工具完整 Schema。
+        IReadOnlyList<IAgentSkill> selectedSkills = await SelectSkillsForCurrentTurnAsync(userInput, workflowTrace);
+        ChatCompletionOptions? options = selectedSkills.Count > 0
+            ? BuildChatOptions(selectedSkills)
             : null;
 
         AgentToolIterationGuard toolIterationGuard = new(_profile.MaxToolIterations);
@@ -122,7 +125,7 @@ public sealed class AgentRunner
                 "Ask model",
                 $"Request #{requestNumber} sent to the model.");
 
-            EmitChatRequestPreview(debugMessages, requestNumber);
+            EmitChatRequestPreview(debugMessages, requestNumber, selectedSkills);
             ChatCompletion completion = await _client.CompleteChatAsync(messages, options);
             EmitChatResponsePreview(completion);
 
@@ -167,6 +170,129 @@ public sealed class AgentRunner
                     throw new InvalidOperationException($"Unsupported finish reason: {completion.FinishReason}");
             }
         }
+    }
+
+    private async Task<IReadOnlyList<IAgentSkill>> SelectSkillsForCurrentTurnAsync(
+        string userInput,
+        AgentWorkflowTrace workflowTrace)
+    {
+        if (!_profile.NativeToolCalling || _skillRegistry.Skills.Count == 0)
+        {
+            return [];
+        }
+
+        if (!_profile.ToolRouterEnabled)
+        {
+            AddWorkflowStep(
+                workflowTrace,
+                AgentWorkflowStepKind.RouteTools,
+                "Route tools",
+                $"Tool router is disabled. Sending all {_skillRegistry.Skills.Count} tools to the main agent.");
+
+            return _skillRegistry.Skills.ToArray();
+        }
+
+        string catalogJson = AgentToolCatalogBuilder.BuildJson(_skillRegistry.Skills);
+        AddWorkflowStep(
+            workflowTrace,
+            AgentWorkflowStepKind.RouteTools,
+            "Route tools",
+            $"Sending lightweight catalog with {_skillRegistry.Skills.Count} tools to the AI Tool Router.");
+
+        List<ChatMessage> routerMessages = BuildToolRouterMessages(userInput, catalogJson);
+        EmitToolRouterRequestPreview(userInput, catalogJson);
+
+        ChatCompletion completion = await _client.CompleteChatAsync(routerMessages);
+        string routerJson = ReadRouterTextContent(completion);
+        EmitToolRouterResponsePreview(completion, routerJson);
+
+        AgentToolRoutingDecision decision = AgentToolRoutingDecisionParser.Parse(
+            routerJson,
+            _skillRegistry.Skills,
+            _profile.MaxToolsPerRequest);
+
+        IReadOnlyList<IAgentSkill> selectedSkills = ResolveSelectedSkills(decision.SelectedToolNames);
+        string selectedToolText = selectedSkills.Count == 0
+            ? "no tools"
+            : string.Join(", ", selectedSkills.Select(skill => skill.Name));
+
+        AddWorkflowStep(
+            workflowTrace,
+            AgentWorkflowStepKind.RouteTools,
+            "Route tools result",
+            $"Router selected {selectedToolText}. Reason: {decision.Reason}");
+
+        return selectedSkills;
+    }
+
+    private static List<ChatMessage> BuildToolRouterMessages(string userInput, string catalogJson)
+    {
+        return
+        [
+            new SystemChatMessage(BuildToolRouterSystemInstructions()),
+            new UserChatMessage(BuildToolRouterUserMessage(userInput, catalogJson))
+        ];
+    }
+
+    private static string BuildToolRouterSystemInstructions()
+    {
+        return """
+        You are an AI Tool Router for an Agent Harness.
+        Your job is to choose which tools should be exposed to the main agent for the current user message.
+
+        Return only valid JSON. Do not wrap it in Markdown. Do not explain outside JSON.
+
+        JSON shape:
+        {
+          "need_tools": true,
+          "selected_tools": ["exact_tool_name"],
+          "reason": "short reason"
+        }
+
+        Rules:
+        - Use exact tool names from the tool catalog.
+        - If no tool is needed, return need_tools=false and selected_tools=[].
+        - Choose the smallest useful tool set.
+        - You are only routing tools. You are not answering the user.
+        """;
+    }
+
+    private static string BuildToolRouterUserMessage(string userInput, string catalogJson)
+    {
+        return $"""
+        Current user message:
+        {userInput}
+
+        Lightweight tool catalog:
+        {catalogJson}
+        """;
+    }
+
+    private static string ReadRouterTextContent(ChatCompletion completion)
+    {
+        string text = string.Concat(completion.Content.Select(part => part.Text));
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new AgentToolRoutingException("Tool router returned no JSON content.");
+        }
+
+        return text;
+    }
+
+    private IReadOnlyList<IAgentSkill> ResolveSelectedSkills(IReadOnlyList<string> selectedToolNames)
+    {
+        if (selectedToolNames.Count == 0)
+        {
+            return [];
+        }
+
+        Dictionary<string, IAgentSkill> skillsByName = _skillRegistry.Skills.ToDictionary(
+            skill => skill.Name,
+            StringComparer.Ordinal);
+
+        return selectedToolNames
+            .Select(toolName => skillsByName[toolName])
+            .ToArray();
     }
 
     private async Task<string> CompleteStreamingAsync(List<ChatMessage> messages)
@@ -331,11 +457,11 @@ public sealed class AgentRunner
         return messages;
     }
 
-    private ChatCompletionOptions BuildChatOptions()
+    private ChatCompletionOptions BuildChatOptions(IEnumerable<IAgentSkill> selectedSkills)
     {
         ChatCompletionOptions options = new();
 
-        foreach (IAgentSkill skill in _skillRegistry.Skills)
+        foreach (IAgentSkill skill in selectedSkills)
         {
             options.Tools.Add(ChatTool.CreateFunctionTool(
                 functionName: skill.Name,
@@ -356,7 +482,10 @@ public sealed class AgentRunner
         WorkflowStepCreated?.Invoke(step);
     }
 
-    private void EmitChatRequestPreview(List<AgentDebugMessage> debugMessages, int requestNumber)
+    private void EmitChatRequestPreview(
+        List<AgentDebugMessage> debugMessages,
+        int requestNumber,
+        IReadOnlyList<IAgentSkill> selectedSkills)
     {
         if (!_profile.ShowDebugRequests)
         {
@@ -370,9 +499,60 @@ public sealed class AgentRunner
             model: _profile.Model,
             stream: _profile.Stream,
             messages: debugMessages,
-            skills: _skillRegistry.Skills,
-            includeTools: _profile.NativeToolCalling));
+            skills: selectedSkills,
+            includeTools: selectedSkills.Count > 0));
         builder.AppendLine("--- End debug request body preview ---");
+
+        DebugMessageCreated?.Invoke(builder.ToString());
+    }
+
+    private void EmitToolRouterRequestPreview(string userInput, string catalogJson)
+    {
+        if (!_profile.ShowDebugRequests)
+        {
+            return;
+        }
+
+        AgentDebugMessage[] debugMessages =
+        [
+            new()
+            {
+                Role = "system",
+                Content = BuildToolRouterSystemInstructions()
+            },
+            new()
+            {
+                Role = "user",
+                Content = BuildToolRouterUserMessage(userInput, catalogJson)
+            }
+        ];
+
+        StringBuilder builder = new();
+        builder.AppendLine();
+        builder.AppendLine("--- Debug tool router request body preview ---");
+        builder.AppendLine(AgentDebugPreviewBuilder.BuildChatCompletionsRequestPreview(
+            model: _profile.Model,
+            stream: false,
+            messages: debugMessages,
+            skills: [],
+            includeTools: false));
+        builder.AppendLine("--- End debug tool router request body preview ---");
+
+        DebugMessageCreated?.Invoke(builder.ToString());
+    }
+
+    private void EmitToolRouterResponsePreview(ChatCompletion completion, string routerJson)
+    {
+        if (!_profile.ShowDebugRequests)
+        {
+            return;
+        }
+
+        StringBuilder builder = new();
+        builder.AppendLine("--- Debug tool router response preview ---");
+        builder.AppendLine($"finish_reason: {completion.FinishReason}");
+        builder.AppendLine($"content: {AgentDebugPreviewBuilder.RedactSensitiveValues(routerJson)}");
+        builder.AppendLine("--- End debug tool router response preview ---");
 
         DebugMessageCreated?.Invoke(builder.ToString());
     }

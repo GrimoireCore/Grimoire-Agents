@@ -32,6 +32,14 @@ public sealed record AgentProfile(
     [property: JsonPropertyName("native_tool_calling")]
     bool NativeToolCalling,
 
+    /// <summary>是否先调用 AI Tool Router，让模型从轻量工具目录里选择本轮需要暴露的工具。</summary>
+    [property: JsonPropertyName("tool_router_enabled")]
+    bool ToolRouterEnabled,
+
+    /// <summary>AI Tool Router 一次最多可以选择多少个工具，用来避免单轮暴露过多工具。</summary>
+    [property: JsonPropertyName("max_tools_per_request")]
+    int MaxToolsPerRequest,
+
     /// <summary>是否在控制台打印请求体预览，方便学习和排查 Tool Calling。</summary>
     [property: JsonPropertyName("show_debug_requests")]
     bool ShowDebugRequests,

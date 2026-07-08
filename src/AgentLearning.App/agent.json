@@ -6,6 +6,8 @@
   "wire_api": "chat_completions",
   "stream": false,
   "native_tool_calling": true,
+  "tool_router_enabled": true,
+  "max_tools_per_request": 2,
   "show_debug_requests": true,
   "show_workflow_trace": true,
   "memory_file": "memory/chat-memory.json",

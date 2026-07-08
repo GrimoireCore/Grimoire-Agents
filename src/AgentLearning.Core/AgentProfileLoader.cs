@@ -113,6 +113,11 @@ public static class AgentProfileLoader
             throw new InvalidOperationException("Agent profile field 'max_memory_content_chars' must be greater than zero.");
         }
 
+        if (profile.MaxToolsPerRequest <= 0)
+        {
+            throw new InvalidOperationException("Agent profile field 'max_tools_per_request' must be greater than zero.");
+        }
+
         if (profile.MaxToolIterations <= 0)
         {
             throw new InvalidOperationException("Agent profile field 'max_tool_iterations' must be greater than zero.");

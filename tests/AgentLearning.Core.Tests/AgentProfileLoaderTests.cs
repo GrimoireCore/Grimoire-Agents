@@ -19,6 +19,8 @@ public sealed class AgentProfileLoaderTests
               "wire_api": "chat_completions",
               "stream": false,
               "native_tool_calling": false,
+              "tool_router_enabled": true,
+              "max_tools_per_request": 2,
               "show_debug_requests": true,
               "show_workflow_trace": true,
               "memory_file": "memory/chat-memory.json",
@@ -44,6 +46,8 @@ public sealed class AgentProfileLoaderTests
             Assert.Equal("chat_completions", profile.WireApi);
             Assert.False(profile.Stream);
             Assert.False(profile.NativeToolCalling);
+            Assert.True(profile.ToolRouterEnabled);
+            Assert.Equal(2, profile.MaxToolsPerRequest);
             Assert.True(profile.ShowDebugRequests);
             Assert.True(profile.ShowWorkflowTrace);
             Assert.Equal("memory/chat-memory.json", profile.MemoryFile);
@@ -79,6 +83,8 @@ public sealed class AgentProfileLoaderTests
               "wire_api": "chat_completions",
               "stream": false,
               "native_tool_calling": false,
+              "tool_router_enabled": true,
+              "max_tools_per_request": 2,
               "show_debug_requests": false,
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
@@ -128,6 +134,8 @@ public sealed class AgentProfileLoaderTests
               "wire_api": "chat_completions",
               "stream": false,
               "native_tool_calling": false,
+              "tool_router_enabled": true,
+              "max_tools_per_request": 2,
               "show_debug_requests": false,
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
@@ -169,6 +177,8 @@ public sealed class AgentProfileLoaderTests
               "wire_api": "chat_completions",
               "stream": false,
               "native_tool_calling": false,
+              "tool_router_enabled": true,
+              "max_tools_per_request": 2,
               "show_debug_requests": false,
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
@@ -210,6 +220,8 @@ public sealed class AgentProfileLoaderTests
               "wire_api": "chat_completions",
               "stream": false,
               "native_tool_calling": false,
+              "tool_router_enabled": true,
+              "max_tools_per_request": 2,
               "show_debug_requests": false,
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
@@ -251,6 +263,8 @@ public sealed class AgentProfileLoaderTests
               "wire_api": "chat_completions",
               "stream": false,
               "native_tool_calling": false,
+              "tool_router_enabled": true,
+              "max_tools_per_request": 2,
               "show_debug_requests": false,
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
@@ -270,6 +284,49 @@ public sealed class AgentProfileLoaderTests
                 () => AgentProfileLoader.LoadFromFileAsync(tempFile));
 
             Assert.Contains("max_memory_content_chars", error.Message);
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public async Task LoadFromFileAsync_rejects_non_positive_max_tools_per_request()
+    {
+        string tempFile = Path.Combine(Path.GetTempPath(), $"agent-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(
+            tempFile,
+            """
+            {
+              "name": "Grimoire Tutor",
+              "model": "gpt-5.4",
+              "base_url": "https://router.hddev.top/v1",
+              "env_key": "GRIMOIRE_API_KEY",
+              "wire_api": "chat_completions",
+              "stream": false,
+              "native_tool_calling": false,
+              "tool_router_enabled": true,
+              "max_tools_per_request": 0,
+              "show_debug_requests": false,
+              "show_workflow_trace": false,
+              "memory_file": "memory/chat-memory.json",
+              "max_memory_turns": 6,
+              "max_memory_content_chars": 2000,
+              "max_tool_iterations": 3,
+              "max_tool_result_chars": 1200,
+              "tool_timeout_seconds": 5,
+              "description": "A patient C# agent teacher.",
+              "instructions": "Teach one concept at a time."
+            }
+            """);
+
+        try
+        {
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => AgentProfileLoader.LoadFromFileAsync(tempFile));
+
+            Assert.Contains("max_tools_per_request", error.Message);
         }
         finally
         {

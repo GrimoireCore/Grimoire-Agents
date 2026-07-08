@@ -8,6 +8,7 @@ public enum AgentWorkflowStepKind
 {
     ReceiveInput,
     BuildContext,
+    RouteTools,
     AskModel,
     ToolRequested,
     ToolFailed,
