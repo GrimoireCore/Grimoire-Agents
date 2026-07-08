@@ -24,7 +24,7 @@ public sealed class AgentSkillRegistry
     {
         if (!_skills.TryGetValue(skillName, out IAgentSkill? skill))
         {
-            throw new InvalidOperationException($"Unknown skill: {skillName}");
+            throw new AgentUnknownSkillException(skillName);
         }
 
         return await skill.ExecuteAsync(argumentsJson, cancellationToken);

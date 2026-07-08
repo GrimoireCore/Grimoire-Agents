@@ -205,19 +205,41 @@ public sealed class AgentRunner
                 "Act",
                 $"Model requested tool '{toolCall.FunctionName}'.");
 
-            string rawResult = await toolTimeoutRunner.RunAsync(
-                toolCall.FunctionName,
-                cancellationToken => _skillRegistry.ExecuteAsync(
+            string rawResult;
+            bool toolFailed = false;
+            try
+            {
+                rawResult = await toolTimeoutRunner.RunAsync(
                     toolCall.FunctionName,
-                    toolCall.FunctionArguments.ToString(),
-                    cancellationToken));
+                    cancellationToken => _skillRegistry.ExecuteAsync(
+                        toolCall.FunctionName,
+                        toolCall.FunctionArguments.ToString(),
+                        cancellationToken));
+            }
+            catch (Exception exception) when (AgentToolErrorFormatter.IsRecoverable(exception))
+            {
+                toolFailed = true;
+                rawResult = AgentToolErrorFormatter.FormatRecoverableError(
+                    toolCall.FunctionName,
+                    exception);
+
+                AddWorkflowStep(
+                    workflowTrace,
+                    AgentWorkflowStepKind.ToolFailed,
+                    "Observe tool error",
+                    $"Tool '{toolCall.FunctionName}' failed: {exception.Message}");
+            }
+
             string result = toolResultLimiter.Limit(rawResult);
 
-            AddWorkflowStep(
-                workflowTrace,
-                AgentWorkflowStepKind.ToolExecuted,
-                "Observe",
-                $"Tool '{toolCall.FunctionName}' returned: {result}");
+            if (!toolFailed)
+            {
+                AddWorkflowStep(
+                    workflowTrace,
+                    AgentWorkflowStepKind.ToolExecuted,
+                    "Observe",
+                    $"Tool '{toolCall.FunctionName}' returned: {result}");
+            }
 
             EmitToolResultPreview(toolCall, result);
 

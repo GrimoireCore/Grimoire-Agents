@@ -10,6 +10,7 @@ public enum AgentWorkflowStepKind
     BuildContext,
     AskModel,
     ToolRequested,
+    ToolFailed,
     ToolExecuted,
     Finish
 }

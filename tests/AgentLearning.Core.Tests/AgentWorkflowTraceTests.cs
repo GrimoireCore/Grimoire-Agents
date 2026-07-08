@@ -53,12 +53,12 @@ public sealed class AgentWorkflowTraceTests
     {
         AgentWorkflowStep step = new(
             Number: 3,
-            Kind: AgentWorkflowStepKind.ToolExecuted,
+            Kind: AgentWorkflowStepKind.ToolFailed,
             Title: "Observe tool result",
-            Detail: "calculate returned 20.");
+            Detail: "calculate failed.");
 
         string line = AgentWorkflowStepFormatter.Format(step);
 
-        Assert.Equal("[Workflow 3] ToolExecuted - Observe tool result: calculate returned 20.", line);
+        Assert.Equal("[Workflow 3] ToolFailed - Observe tool result: calculate failed.", line);
     }
 }

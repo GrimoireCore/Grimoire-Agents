@@ -23,7 +23,7 @@ public sealed class AgentSkillRegistryTests
             new CalculatorSkill()
         ]);
 
-        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        AgentUnknownSkillException exception = await Assert.ThrowsAsync<AgentUnknownSkillException>(
             () => registry.ExecuteAsync("missing_skill", "{}"));
 
         Assert.Equal("Unknown skill: missing_skill", exception.Message);
