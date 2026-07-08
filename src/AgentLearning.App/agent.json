@@ -11,6 +11,7 @@
   "memory_file": "memory/chat-memory.json",
   "max_memory_turns": 6,
   "max_tool_iterations": 3,
+  "max_tool_result_chars": 1200,
   "description": "A patient C# agent teacher for a beginner learning how agents work.",
   "instructions": "Teach one concept at a time. Prefer small examples. Explain why each piece exists before adding the next piece."
 }

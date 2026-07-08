@@ -52,6 +52,10 @@ public sealed record AgentProfile(
     [property: JsonPropertyName("max_tool_iterations")]
     int MaxToolIterations,
 
+    /// <summary>工具结果最多保留多少字符发回模型，用来控制上下文大小。</summary>
+    [property: JsonPropertyName("max_tool_result_chars")]
+    int MaxToolResultChars,
+
     /// <summary>本地 API Key。建议只放在 agent.local.json，不要放在主配置里。</summary>
     [property: JsonPropertyName("api_key")]
     string? ApiKey,
