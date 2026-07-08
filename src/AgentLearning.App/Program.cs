@@ -72,6 +72,7 @@ Console.WriteLine($"Loaded memory turns: {memory.Turns.Count}");
 Console.WriteLine($"Max memory turns sent: {profile.MaxMemoryTurns}");
 Console.WriteLine($"Max tool iterations: {profile.MaxToolIterations}");
 Console.WriteLine($"Max tool result chars: {profile.MaxToolResultChars}");
+Console.WriteLine($"Tool timeout seconds: {profile.ToolTimeoutSeconds}");
 Console.WriteLine($"Skills: {string.Join(", ", skillRegistry.Skills.Select(skill => skill.Name))}");
 Console.WriteLine("Type a message and press Enter. Type 'exit' to quit.");
 Console.WriteLine("Local skill commands: /time, /calc <expression>");

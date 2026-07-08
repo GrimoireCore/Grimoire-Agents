@@ -101,6 +101,7 @@ public sealed class AgentRunner
 
         AgentToolIterationGuard toolIterationGuard = new(_profile.MaxToolIterations);
         AgentToolResultLimiter toolResultLimiter = new(_profile.MaxToolResultChars);
+        AgentToolTimeoutRunner toolTimeoutRunner = new(_profile.ToolTimeoutSeconds);
         int requestNumber = 1;
         while (true)
         {
@@ -124,7 +125,7 @@ public sealed class AgentRunner
                 }
 
                 toolIterationGuard.RecordToolIteration();
-                await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, toolResultLimiter);
+                await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, toolResultLimiter, toolTimeoutRunner);
                 requestNumber++;
                 continue;
             }
@@ -138,7 +139,7 @@ public sealed class AgentRunner
 
                 case ChatFinishReason.ToolCalls:
                     toolIterationGuard.RecordToolIteration();
-                    await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, toolResultLimiter);
+                    await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, toolResultLimiter, toolTimeoutRunner);
                     requestNumber++;
                     break;
 
@@ -179,7 +180,8 @@ public sealed class AgentRunner
         List<AgentDebugMessage> debugMessages,
         ChatCompletion completion,
         AgentWorkflowTrace workflowTrace,
-        AgentToolResultLimiter toolResultLimiter)
+        AgentToolResultLimiter toolResultLimiter,
+        AgentToolTimeoutRunner toolTimeoutRunner)
     {
         // 先把“模型要求调用工具”这条 assistant 消息加入上下文。
         // SDK 会保留 tool_call_id，下一条 ToolChatMessage 才能和它对上。
@@ -203,9 +205,12 @@ public sealed class AgentRunner
                 "Act",
                 $"Model requested tool '{toolCall.FunctionName}'.");
 
-            string rawResult = await _skillRegistry.ExecuteAsync(
+            string rawResult = await toolTimeoutRunner.RunAsync(
                 toolCall.FunctionName,
-                toolCall.FunctionArguments.ToString());
+                cancellationToken => _skillRegistry.ExecuteAsync(
+                    toolCall.FunctionName,
+                    toolCall.FunctionArguments.ToString(),
+                    cancellationToken));
             string result = toolResultLimiter.Limit(rawResult);
 
             AddWorkflowStep(

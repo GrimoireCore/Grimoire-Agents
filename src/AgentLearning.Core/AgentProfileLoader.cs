@@ -118,6 +118,11 @@ public static class AgentProfileLoader
             throw new InvalidOperationException("Agent profile field 'max_tool_result_chars' must be greater than zero.");
         }
 
+        if (profile.ToolTimeoutSeconds <= 0)
+        {
+            throw new InvalidOperationException("Agent profile field 'tool_timeout_seconds' must be greater than zero.");
+        }
+
         if (!profile.WireApi.Equals("chat_completions", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("Only wire_api = 'chat_completions' is supported in this lesson.");

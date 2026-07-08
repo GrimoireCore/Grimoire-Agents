@@ -56,6 +56,10 @@ public sealed record AgentProfile(
     [property: JsonPropertyName("max_tool_result_chars")]
     int MaxToolResultChars,
 
+    /// <summary>每个工具最多允许执行多少秒，用来防止工具卡住后 Agent 一直等待。</summary>
+    [property: JsonPropertyName("tool_timeout_seconds")]
+    int ToolTimeoutSeconds,
+
     /// <summary>本地 API Key。建议只放在 agent.local.json，不要放在主配置里。</summary>
     [property: JsonPropertyName("api_key")]
     string? ApiKey,
