@@ -70,6 +70,7 @@ Console.WriteLine($"Show workflow trace: {profile.ShowWorkflowTrace}");
 Console.WriteLine($"Memory file: {memoryPath}");
 Console.WriteLine($"Loaded memory turns: {memory.Turns.Count}");
 Console.WriteLine($"Max memory turns sent: {profile.MaxMemoryTurns}");
+Console.WriteLine($"Max memory content chars: {profile.MaxMemoryContentChars}");
 Console.WriteLine($"Max tool iterations: {profile.MaxToolIterations}");
 Console.WriteLine($"Max tool result chars: {profile.MaxToolResultChars}");
 Console.WriteLine($"Tool timeout seconds: {profile.ToolTimeoutSeconds}");
@@ -137,9 +138,7 @@ static async Task<bool> TryRunLocalSkillCommandAsync(
     if (input.Equals("/time", StringComparison.OrdinalIgnoreCase))
     {
         string result = await skillRegistry.ExecuteAsync("get_current_time", "{}");
-        memory.AddUserMessage(input);
-        memory.AddAssistantMessage(result);
-        await ChatMemoryStore.SaveAsync(memoryPath, memory);
+        await TrySaveLocalSkillMemoryAsync(profile, memory, memoryPath, input, result);
         Console.WriteLine($"{profile.Name}> {result}");
         return true;
     }
@@ -151,12 +150,28 @@ static async Task<bool> TryRunLocalSkillCommandAsync(
         string argumentsJson = JsonSerializer.Serialize(new { expression });
         string result = await skillRegistry.ExecuteAsync("calculate", argumentsJson);
 
-        memory.AddUserMessage(input);
-        memory.AddAssistantMessage(result);
-        await ChatMemoryStore.SaveAsync(memoryPath, memory);
+        await TrySaveLocalSkillMemoryAsync(profile, memory, memoryPath, input, result);
         Console.WriteLine($"{profile.Name}> {result}");
         return true;
     }
 
     return false;
+}
+
+static async Task TrySaveLocalSkillMemoryAsync(
+    AgentProfile profile,
+    ChatMemory memory,
+    string memoryPath,
+    string userInput,
+    string assistantReply)
+{
+    AgentMemoryWritePolicy memoryWritePolicy = new(profile.MaxMemoryContentChars);
+    if (!memoryWritePolicy.ShouldWrite(userInput) || !memoryWritePolicy.ShouldWrite(assistantReply))
+    {
+        return;
+    }
+
+    memory.AddUserMessage(userInput);
+    memory.AddAssistantMessage(assistantReply);
+    await ChatMemoryStore.SaveAsync(memoryPath, memory);
 }

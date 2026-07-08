@@ -10,6 +10,7 @@
   "show_workflow_trace": true,
   "memory_file": "memory/chat-memory.json",
   "max_memory_turns": 6,
+  "max_memory_content_chars": 2000,
   "max_tool_iterations": 3,
   "max_tool_result_chars": 1200,
   "tool_timeout_seconds": 5,

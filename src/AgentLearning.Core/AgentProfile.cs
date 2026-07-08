@@ -48,6 +48,10 @@ public sealed record AgentProfile(
     [property: JsonPropertyName("max_memory_turns")]
     int MaxMemoryTurns,
 
+    /// <summary>单条记忆最多允许保存多少字符，用来避免大段文本污染长期记忆。</summary>
+    [property: JsonPropertyName("max_memory_content_chars")]
+    int MaxMemoryContentChars,
+
     /// <summary>一次用户请求里最多允许几轮工具调用，用来防止工具循环失控。</summary>
     [property: JsonPropertyName("max_tool_iterations")]
     int MaxToolIterations,

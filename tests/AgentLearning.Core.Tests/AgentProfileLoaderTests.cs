@@ -23,6 +23,7 @@ public sealed class AgentProfileLoaderTests
               "show_workflow_trace": true,
               "memory_file": "memory/chat-memory.json",
               "max_memory_turns": 6,
+              "max_memory_content_chars": 2000,
               "max_tool_iterations": 3,
               "max_tool_result_chars": 1200,
               "tool_timeout_seconds": 5,
@@ -47,6 +48,7 @@ public sealed class AgentProfileLoaderTests
             Assert.True(profile.ShowWorkflowTrace);
             Assert.Equal("memory/chat-memory.json", profile.MemoryFile);
             Assert.Equal(6, profile.MaxMemoryTurns);
+            Assert.Equal(2000, profile.MaxMemoryContentChars);
             Assert.Equal(3, profile.MaxToolIterations);
             Assert.Equal(1200, profile.MaxToolResultChars);
             Assert.Equal(5, profile.ToolTimeoutSeconds);
@@ -81,6 +83,7 @@ public sealed class AgentProfileLoaderTests
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
               "max_memory_turns": 6,
+              "max_memory_content_chars": 2000,
               "max_tool_iterations": 3,
               "max_tool_result_chars": 1200,
               "tool_timeout_seconds": 5,
@@ -129,6 +132,7 @@ public sealed class AgentProfileLoaderTests
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
               "max_memory_turns": 6,
+              "max_memory_content_chars": 2000,
               "max_tool_iterations": 0,
               "max_tool_result_chars": 1200,
               "tool_timeout_seconds": 5,
@@ -169,6 +173,7 @@ public sealed class AgentProfileLoaderTests
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
               "max_memory_turns": 6,
+              "max_memory_content_chars": 2000,
               "max_tool_iterations": 3,
               "max_tool_result_chars": 0,
               "tool_timeout_seconds": 5,
@@ -209,6 +214,7 @@ public sealed class AgentProfileLoaderTests
               "show_workflow_trace": false,
               "memory_file": "memory/chat-memory.json",
               "max_memory_turns": 6,
+              "max_memory_content_chars": 2000,
               "max_tool_iterations": 3,
               "max_tool_result_chars": 1200,
               "tool_timeout_seconds": 0,
@@ -223,6 +229,47 @@ public sealed class AgentProfileLoaderTests
                 () => AgentProfileLoader.LoadFromFileAsync(tempFile));
 
             Assert.Contains("tool_timeout_seconds", error.Message);
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public async Task LoadFromFileAsync_rejects_non_positive_max_memory_content_chars()
+    {
+        string tempFile = Path.Combine(Path.GetTempPath(), $"agent-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(
+            tempFile,
+            """
+            {
+              "name": "Grimoire Tutor",
+              "model": "gpt-5.4",
+              "base_url": "https://router.hddev.top/v1",
+              "env_key": "GRIMOIRE_API_KEY",
+              "wire_api": "chat_completions",
+              "stream": false,
+              "native_tool_calling": false,
+              "show_debug_requests": false,
+              "show_workflow_trace": false,
+              "memory_file": "memory/chat-memory.json",
+              "max_memory_turns": 6,
+              "max_memory_content_chars": 0,
+              "max_tool_iterations": 3,
+              "max_tool_result_chars": 1200,
+              "tool_timeout_seconds": 5,
+              "description": "A patient C# agent teacher.",
+              "instructions": "Teach one concept at a time."
+            }
+            """);
+
+        try
+        {
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => AgentProfileLoader.LoadFromFileAsync(tempFile));
+
+            Assert.Contains("max_memory_content_chars", error.Message);
         }
         finally
         {

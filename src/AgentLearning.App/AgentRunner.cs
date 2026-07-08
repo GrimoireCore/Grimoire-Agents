@@ -52,22 +52,28 @@ public sealed class AgentRunner
 
         AgentWorkflowTrace workflowTrace = new();
 
-        _memory.AddUserMessage(userInput);
+        AgentMemoryWritePolicy memoryWritePolicy = new(_profile.MaxMemoryContentChars);
+        bool shouldSaveUserInput = memoryWritePolicy.ShouldWrite(userInput);
+
         AddWorkflowStep(
             workflowTrace,
             AgentWorkflowStepKind.ReceiveInput,
             "Receive user input",
-            "User message was saved to memory.");
+            shouldSaveUserInput
+                ? "User message is eligible for memory."
+                : "User message will only be used in this turn.");
 
         IReadOnlyList<ChatTurn> contextTurns = ChatMemoryWindow.GetRecentTurns(_memory, _profile.MaxMemoryTurns);
         AddWorkflowStep(
             workflowTrace,
             AgentWorkflowStepKind.BuildContext,
             "Build context window",
-            $"Sending {contextTurns.Count} of {_memory.Turns.Count} memory turns.");
+            $"Sending {contextTurns.Count} of {_memory.Turns.Count} saved memory turns plus current input.");
 
         List<ChatMessage> messages = BuildMessages(contextTurns);
         List<AgentDebugMessage> debugMessages = BuildDebugMessages(contextTurns);
+        AddCurrentUserInput(messages, debugMessages, userInput);
+
         string assistantReply = _profile.Stream
             ? await CompleteStreamingAsync(messages)
             : await CompleteOnceAsync(messages, debugMessages, workflowTrace);
@@ -83,8 +89,13 @@ public sealed class AgentRunner
             "Finish",
             "Final answer was produced.");
 
-        _memory.AddAssistantMessage(assistantReply);
-        await ChatMemoryStore.SaveAsync(_memoryPath, _memory);
+        bool shouldSaveAssistantReply = memoryWritePolicy.ShouldWrite(assistantReply);
+        if (shouldSaveUserInput && shouldSaveAssistantReply)
+        {
+            _memory.AddUserMessage(userInput);
+            _memory.AddAssistantMessage(assistantReply);
+            await ChatMemoryStore.SaveAsync(_memoryPath, _memory);
+        }
 
         return new AgentRunResult(assistantReply, workflowTrace);
     }
@@ -273,6 +284,19 @@ public sealed class AgentRunner
         }
 
         return messages;
+    }
+
+    private static void AddCurrentUserInput(
+        List<ChatMessage> messages,
+        List<AgentDebugMessage> debugMessages,
+        string userInput)
+    {
+        messages.Add(new UserChatMessage(userInput));
+        debugMessages.Add(new AgentDebugMessage
+        {
+            Role = "user",
+            Content = userInput
+        });
     }
 
     private List<AgentDebugMessage> BuildDebugMessages(IReadOnlyList<ChatTurn> contextTurns)
