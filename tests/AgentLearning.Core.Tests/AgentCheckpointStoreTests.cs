@@ -39,6 +39,10 @@ public sealed class AgentCheckpointStoreTests
             Assert.Contains("\"kind\": \"PendingToolApproval\"", savedJson);
             Assert.Contains("\"status\": \"WaitingForApproval\"", savedJson);
             Assert.Contains("\"risk_level\": \"Medium\"", savedJson);
+            Assert.Contains("\"messages\": [", savedJson);
+            Assert.Contains("\"tool_calls\": [", savedJson);
+            Assert.Contains("\"selected_tool_names\": [", savedJson);
+            Assert.Contains("\"write_note\"", savedJson);
 
             AgentRunCheckpoint? loaded = await AgentCheckpointStore.LoadAsync(checkpointFile);
 
@@ -46,9 +50,36 @@ public sealed class AgentCheckpointStoreTests
             Assert.Equal("run_abc", loaded.RunId);
             Assert.Equal(AgentCheckpointKind.PendingToolApproval, loaded.Kind);
             Assert.Equal(AgentRunStatus.WaitingForApproval, loaded.State.Status);
+            Assert.Equal(["system", "user", "assistant"], loaded.Messages.Select(message => message.Role));
+            Assert.Equal("call_123", loaded.Messages[2].ToolCalls[0].Id);
+            Assert.Equal("write_note", loaded.Messages[2].ToolCalls[0].Name);
+            Assert.Equal("""{"note":"hello"}""", loaded.Messages[2].ToolCalls[0].ArgumentsJson);
+            Assert.Equal(["write_note"], loaded.SelectedToolNames);
             Assert.NotNull(loaded.PendingApproval);
             Assert.Equal("call_123", loaded.PendingApproval.ToolCallId);
             Assert.Equal("""{"note":"hello"}""", loaded.PendingApproval.ArgumentsJson);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteAsync_removes_checkpoint_file_and_ignores_missing_file()
+    {
+        string tempDirectory = CreateTempDirectory();
+        string checkpointFile = Path.Combine(tempDirectory, "checkpoints", "pending.json");
+        AgentRunCheckpoint checkpoint = CreateCheckpoint();
+
+        try
+        {
+            await AgentCheckpointStore.SaveAsync(checkpointFile, checkpoint);
+
+            await AgentCheckpointStore.DeleteAsync(checkpointFile);
+            await AgentCheckpointStore.DeleteAsync(checkpointFile);
+
+            Assert.False(File.Exists(checkpointFile));
         }
         finally
         {
@@ -73,11 +104,26 @@ public sealed class AgentCheckpointStoreTests
             ArgumentsJson: """{"note":"hello"}""",
             RiskLevel: AgentSkillRiskLevel.Medium);
 
+        AgentCheckpointMessage[] messages =
+        [
+            AgentCheckpointMessage.Text("system", "You are a teacher."),
+            AgentCheckpointMessage.Text("user", "please save a note"),
+            AgentCheckpointMessage.AssistantToolCalls(
+            [
+                new AgentCheckpointToolCall(
+                    Id: "call_123",
+                    Name: "write_note",
+                    ArgumentsJson: """{"note":"hello"}""")
+            ])
+        ];
+
         return AgentRunCheckpoint.CreatePendingApproval(
             runId: "run_abc",
             createdAt: new DateTimeOffset(2026, 7, 9, 9, 30, 0, TimeSpan.FromHours(8)),
             request: request,
-            state: snapshot);
+            state: snapshot,
+            messages: messages,
+            selectedToolNames: ["write_note"]);
     }
 
     private static string CreateTempDirectory()

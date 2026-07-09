@@ -52,4 +52,15 @@ public static class AgentCheckpointStore
         await using FileStream stream = File.Create(filePath);
         await JsonSerializer.SerializeAsync(stream, checkpoint, JsonOptions, cancellationToken);
     }
+
+    /// <summary>删除 Checkpoint 文件。文件不存在时什么也不做。</summary>
+    public static Task DeleteAsync(string filePath)
+    {
+        if (File.Exists(filePath))
+        {
+            File.Delete(filePath);
+        }
+
+        return Task.CompletedTask;
+    }
 }

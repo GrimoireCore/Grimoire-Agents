@@ -156,7 +156,16 @@ public sealed class AgentRunner
                 }
 
                 toolIterationGuard.RecordToolIteration();
-                await ResolveToolCallsAsync(runId, messages, debugMessages, completion, workflowTrace, runState, toolResultLimiter, toolTimeoutRunner);
+                await ResolveToolCallsAsync(
+                    runId,
+                    messages,
+                    debugMessages,
+                    selectedSkills,
+                    completion,
+                    workflowTrace,
+                    runState,
+                    toolResultLimiter,
+                    toolTimeoutRunner);
                 requestNumber++;
                 continue;
             }
@@ -170,7 +179,16 @@ public sealed class AgentRunner
 
                 case ChatFinishReason.ToolCalls:
                     toolIterationGuard.RecordToolIteration();
-                    await ResolveToolCallsAsync(runId, messages, debugMessages, completion, workflowTrace, runState, toolResultLimiter, toolTimeoutRunner);
+                    await ResolveToolCallsAsync(
+                        runId,
+                        messages,
+                        debugMessages,
+                        selectedSkills,
+                        completion,
+                        workflowTrace,
+                        runState,
+                        toolResultLimiter,
+                        toolTimeoutRunner);
                     requestNumber++;
                     break;
 
@@ -337,6 +355,7 @@ public sealed class AgentRunner
         string runId,
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
+        IReadOnlyList<IAgentSkill> selectedSkills,
         ChatCompletion completion,
         AgentWorkflowTrace workflowTrace,
         AgentRunState runState,
@@ -368,7 +387,14 @@ public sealed class AgentRunner
                 toolName: toolCall.FunctionName);
 
             IAgentSkill skill = _skillRegistry.GetRequiredSkill(toolCall.FunctionName);
-            if (!await ConfirmToolCallIfNeededAsync(runId, workflowTrace, runState, skill, toolCall))
+            if (!await ConfirmToolCallIfNeededAsync(
+                runId,
+                workflowTrace,
+                runState,
+                debugMessages,
+                selectedSkills,
+                skill,
+                toolCall))
             {
                 string rejectedResult = AgentToolApprovalObservation.BuildRejected(toolCall.FunctionName);
                 EmitToolResultPreview(toolCall, rejectedResult);
@@ -442,6 +468,8 @@ public sealed class AgentRunner
         string runId,
         AgentWorkflowTrace workflowTrace,
         AgentRunState runState,
+        IReadOnlyList<AgentDebugMessage> debugMessages,
+        IReadOnlyList<IAgentSkill> selectedSkills,
         IAgentSkill skill,
         ChatToolCall toolCall)
     {
@@ -471,7 +499,7 @@ public sealed class AgentRunner
             ArgumentsJson: toolCall.FunctionArguments.ToString(),
             RiskLevel: skill.RiskLevel);
 
-        await CreateCheckpointIfHandlerExistsAsync(runId, request, runState);
+        await CreateCheckpointIfHandlerExistsAsync(runId, request, runState, debugMessages, selectedSkills);
 
         bool approved = await ToolConfirmationRequestedAsync(request);
         if (approved)
@@ -493,18 +521,28 @@ public sealed class AgentRunner
     private async Task CreateCheckpointIfHandlerExistsAsync(
         string runId,
         AgentToolConfirmationRequest request,
-        AgentRunState runState)
+        AgentRunState runState,
+        IReadOnlyList<AgentDebugMessage> debugMessages,
+        IReadOnlyList<IAgentSkill> selectedSkills)
     {
         if (CheckpointCreatedAsync is null)
         {
             return;
         }
 
+        IReadOnlyList<AgentCheckpointMessage> checkpointMessages =
+            AgentCheckpointMessageBuilder.FromDebugMessages(debugMessages);
+        string[] selectedToolNames = selectedSkills
+            .Select(skill => skill.Name)
+            .ToArray();
+
         AgentRunCheckpoint checkpoint = AgentRunCheckpoint.CreatePendingApproval(
             runId,
             DateTimeOffset.Now,
             request,
-            runState.ToSnapshot());
+            runState.ToSnapshot(),
+            checkpointMessages,
+            selectedToolNames);
 
         await CheckpointCreatedAsync(checkpoint);
     }
