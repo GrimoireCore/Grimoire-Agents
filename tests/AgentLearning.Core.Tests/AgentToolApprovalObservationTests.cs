@@ -18,11 +18,13 @@ public sealed class AgentToolApprovalObservationTests
     public void ConfirmationRequest_captures_tool_metadata()
     {
         AgentToolConfirmationRequest request = new(
+            ToolCallId: "call_123",
             ToolName: "write_note",
             Description: "Append a note.",
             ArgumentsJson: """{"note":"hello"}""",
             RiskLevel: AgentSkillRiskLevel.Medium);
 
+        Assert.Equal("call_123", request.ToolCallId);
         Assert.Equal("write_note", request.ToolName);
         Assert.Equal("Append a note.", request.Description);
         Assert.Equal("""{"note":"hello"}""", request.ArgumentsJson);

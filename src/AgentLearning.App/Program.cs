@@ -41,6 +41,7 @@ ChatClient client = new(
 // memory_file 可以写相对路径；这里把它解析成真正使用的文件路径。
 string memoryPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, profile.MemoryFile);
 string notesPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, "memory/agent-notes.md");
+string checkpointPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, "memory/pending-approval-checkpoint.json");
 
 // 现在记忆会从本地 JSON 文件恢复；文件不存在时得到一个空记忆。
 ChatMemory memory = await ChatMemoryStore.LoadAsync(memoryPath);
@@ -54,6 +55,7 @@ AgentSkillRegistry skillRegistry = new([
 ]);
 
 AgentRunner agentRunner = new(profile, client, memory, memoryPath, skillRegistry);
+agentRunner.CheckpointCreatedAsync = checkpoint => SaveCheckpointAsync(checkpointPath, checkpoint, profile);
 agentRunner.ToolConfirmationRequestedAsync = ConfirmToolCallAsync;
 agentRunner.WorkflowStepCreated += step =>
 {
@@ -75,6 +77,7 @@ Console.WriteLine($"Show debug requests: {profile.ShowDebugRequests}");
 Console.WriteLine($"Show workflow trace: {profile.ShowWorkflowTrace}");
 Console.WriteLine($"Memory file: {memoryPath}");
 Console.WriteLine($"Notes file: {notesPath}");
+Console.WriteLine($"Checkpoint file: {checkpointPath}");
 Console.WriteLine($"Loaded memory turns: {memory.Turns.Count}");
 Console.WriteLine($"Max memory turns sent: {profile.MaxMemoryTurns}");
 Console.WriteLine($"Max memory content chars: {profile.MaxMemoryContentChars}");
@@ -187,6 +190,19 @@ static async Task TrySaveLocalSkillMemoryAsync(
     memory.AddUserMessage(userInput);
     memory.AddAssistantMessage(assistantReply);
     await ChatMemoryStore.SaveAsync(memoryPath, memory);
+}
+
+static async Task SaveCheckpointAsync(
+    string checkpointPath,
+    AgentRunCheckpoint checkpoint,
+    AgentProfile profile)
+{
+    await AgentCheckpointStore.SaveAsync(checkpointPath, checkpoint);
+
+    if (profile.ShowWorkflowTrace)
+    {
+        Console.WriteLine($"[Checkpoint] Saved {checkpoint.Kind} for run {checkpoint.RunId} to {checkpointPath}");
+    }
 }
 
 static Task<bool> ConfirmToolCallAsync(AgentToolConfirmationRequest request)

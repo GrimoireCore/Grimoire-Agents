@@ -42,6 +42,9 @@ public sealed class AgentRunner
     /// <summary>Agent 运行状态变化时触发，Program.cs 可以选择展示给用户或 UI。</summary>
     public event Action<AgentRunSnapshot>? StateChanged;
 
+    /// <summary>Agent 创建恢复点时触发，Program.cs 可以选择保存到文件或数据库。</summary>
+    public Func<AgentRunCheckpoint, Task>? CheckpointCreatedAsync { get; set; }
+
     /// <summary>危险工具需要用户确认时触发。返回 true 才会继续执行工具。</summary>
     public Func<AgentToolConfirmationRequest, Task<bool>>? ToolConfirmationRequestedAsync { get; set; }
 
@@ -58,6 +61,7 @@ public sealed class AgentRunner
 
         AgentWorkflowTrace workflowTrace = new();
         AgentRunState runState = new();
+        string runId = $"run_{Guid.NewGuid():N}";
 
         AgentMemoryWritePolicy memoryWritePolicy = new(_profile.MaxMemoryContentChars);
         bool shouldSaveUserInput = memoryWritePolicy.ShouldWrite(userInput);
@@ -85,7 +89,7 @@ public sealed class AgentRunner
 
         string assistantReply = _profile.Stream
             ? await CompleteStreamingAsync(messages)
-            : await CompleteOnceAsync(userInput, messages, debugMessages, workflowTrace, runState);
+            : await CompleteOnceAsync(runId, userInput, messages, debugMessages, workflowTrace, runState);
 
         if (string.IsNullOrWhiteSpace(assistantReply))
         {
@@ -111,6 +115,7 @@ public sealed class AgentRunner
     }
 
     private async Task<string> CompleteOnceAsync(
+        string runId,
         string userInput,
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
@@ -151,7 +156,7 @@ public sealed class AgentRunner
                 }
 
                 toolIterationGuard.RecordToolIteration();
-                await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, runState, toolResultLimiter, toolTimeoutRunner);
+                await ResolveToolCallsAsync(runId, messages, debugMessages, completion, workflowTrace, runState, toolResultLimiter, toolTimeoutRunner);
                 requestNumber++;
                 continue;
             }
@@ -165,7 +170,7 @@ public sealed class AgentRunner
 
                 case ChatFinishReason.ToolCalls:
                     toolIterationGuard.RecordToolIteration();
-                    await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, runState, toolResultLimiter, toolTimeoutRunner);
+                    await ResolveToolCallsAsync(runId, messages, debugMessages, completion, workflowTrace, runState, toolResultLimiter, toolTimeoutRunner);
                     requestNumber++;
                     break;
 
@@ -329,6 +334,7 @@ public sealed class AgentRunner
     }
 
     private async Task ResolveToolCallsAsync(
+        string runId,
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
         ChatCompletion completion,
@@ -362,7 +368,7 @@ public sealed class AgentRunner
                 toolName: toolCall.FunctionName);
 
             IAgentSkill skill = _skillRegistry.GetRequiredSkill(toolCall.FunctionName);
-            if (!await ConfirmToolCallIfNeededAsync(workflowTrace, runState, skill, toolCall))
+            if (!await ConfirmToolCallIfNeededAsync(runId, workflowTrace, runState, skill, toolCall))
             {
                 string rejectedResult = AgentToolApprovalObservation.BuildRejected(toolCall.FunctionName);
                 EmitToolResultPreview(toolCall, rejectedResult);
@@ -433,6 +439,7 @@ public sealed class AgentRunner
     }
 
     private async Task<bool> ConfirmToolCallIfNeededAsync(
+        string runId,
         AgentWorkflowTrace workflowTrace,
         AgentRunState runState,
         IAgentSkill skill,
@@ -458,10 +465,13 @@ public sealed class AgentRunner
         }
 
         AgentToolConfirmationRequest request = new(
+            ToolCallId: toolCall.Id,
             ToolName: skill.Name,
             Description: skill.Description,
             ArgumentsJson: toolCall.FunctionArguments.ToString(),
             RiskLevel: skill.RiskLevel);
+
+        await CreateCheckpointIfHandlerExistsAsync(runId, request, runState);
 
         bool approved = await ToolConfirmationRequestedAsync(request);
         if (approved)
@@ -478,6 +488,25 @@ public sealed class AgentRunner
             toolName: skill.Name);
 
         return false;
+    }
+
+    private async Task CreateCheckpointIfHandlerExistsAsync(
+        string runId,
+        AgentToolConfirmationRequest request,
+        AgentRunState runState)
+    {
+        if (CheckpointCreatedAsync is null)
+        {
+            return;
+        }
+
+        AgentRunCheckpoint checkpoint = AgentRunCheckpoint.CreatePendingApproval(
+            runId,
+            DateTimeOffset.Now,
+            request,
+            runState.ToSnapshot());
+
+        await CheckpointCreatedAsync(checkpoint);
     }
 
     private List<ChatMessage> BuildMessages(IReadOnlyList<ChatTurn> contextTurns)
