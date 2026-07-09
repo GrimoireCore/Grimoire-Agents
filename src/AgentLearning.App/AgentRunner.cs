@@ -14,7 +14,7 @@ namespace AgentLearning.App;
 public sealed class AgentRunner
 {
     private readonly AgentProfile _profile;
-    private readonly ChatClient _client;
+    private readonly IAgentChatClient _client;
     private readonly ChatMemory _memory;
     private readonly string _memoryPath;
     private readonly AgentSkillRegistry _skillRegistry;
@@ -22,6 +22,16 @@ public sealed class AgentRunner
     public AgentRunner(
         AgentProfile profile,
         ChatClient client,
+        ChatMemory memory,
+        string memoryPath,
+        AgentSkillRegistry skillRegistry)
+        : this(profile, new OpenAIChatClientAdapter(client), memory, memoryPath, skillRegistry)
+    {
+    }
+
+    public AgentRunner(
+        AgentProfile profile,
+        IAgentChatClient client,
         ChatMemory memory,
         string memoryPath,
         AgentSkillRegistry skillRegistry)
@@ -44,6 +54,9 @@ public sealed class AgentRunner
 
     /// <summary>Agent 创建恢复点时触发，Program.cs 可以选择保存到文件或数据库。</summary>
     public Func<AgentRunCheckpoint, Task>? CheckpointCreatedAsync { get; set; }
+
+    /// <summary>Agent 已经消费恢复点时触发，Program.cs 可以选择删除对应的 Checkpoint 文件。</summary>
+    public Func<AgentRunCheckpoint, Task>? CheckpointConsumedAsync { get; set; }
 
     /// <summary>危险工具需要用户确认时触发。返回 true 才会继续执行工具。</summary>
     public Func<AgentToolConfirmationRequest, Task<bool>>? ToolConfirmationRequestedAsync { get; set; }
@@ -114,6 +127,76 @@ public sealed class AgentRunner
         return new AgentRunResult(assistantReply, workflowTrace, runState.ToSnapshot());
     }
 
+    /// <summary>
+    /// 从等待工具确认的 Checkpoint 恢复运行。
+    /// 它会先执行或拒绝那个待确认工具，再回到完整的模型工具循环里继续跑。
+    /// </summary>
+    public async Task<AgentRunResult> ResumeAsync(AgentRunCheckpoint checkpoint, bool approved)
+    {
+        ArgumentNullException.ThrowIfNull(checkpoint);
+
+        AgentWorkflowTrace workflowTrace = new();
+        AgentRunState runState = new();
+
+        AgentCheckpointResumeResult resumeResult = await AgentCheckpointResumer.ResumeAsync(
+            checkpoint,
+            approved,
+            _skillRegistry);
+
+        if (CheckpointConsumedAsync is not null)
+        {
+            await CheckpointConsumedAsync(checkpoint);
+        }
+
+        AddWorkflowStep(
+            workflowTrace,
+            runState,
+            resumeResult.ToolExecuted
+                ? AgentWorkflowStepKind.ToolExecuted
+                : AgentWorkflowStepKind.ToolRejected,
+            resumeResult.ToolExecuted ? "Resume approved tool" : "Resume rejected tool",
+            resumeResult.Observation,
+            toolName: resumeResult.ToolName);
+
+        List<ChatMessage> messages = BuildResumeMessages(checkpoint.Messages);
+        List<AgentDebugMessage> debugMessages = BuildResumeDebugMessages(checkpoint.Messages);
+
+        // 恢复点之后补上的工具观察结果。
+        // tool_call_id 必须和 checkpoint 里 assistant tool_calls 的 id 一致。
+        messages.Add(new ToolChatMessage(resumeResult.ToolCallId, resumeResult.Observation));
+        debugMessages.Add(new AgentDebugMessage
+        {
+            Role = "tool",
+            ToolCallId = resumeResult.ToolCallId,
+            Content = resumeResult.Observation
+        });
+
+        IReadOnlyList<IAgentSkill> selectedSkills = ResolveSelectedSkills(checkpoint.SelectedToolNames);
+        ChatCompletionOptions? options = selectedSkills.Count > 0
+            ? BuildChatOptions(selectedSkills)
+            : null;
+
+        string assistantReply = await CompleteToolLoopAsync(
+            checkpoint.RunId,
+            messages,
+            debugMessages,
+            selectedSkills,
+            options,
+            workflowTrace,
+            runState);
+
+        AddWorkflowStep(
+            workflowTrace,
+            runState,
+            AgentWorkflowStepKind.Finish,
+            "Finish",
+            "Final answer was produced after resume.");
+
+        await TrySaveResumedMemoryAsync(checkpoint, assistantReply);
+
+        return new AgentRunResult(assistantReply, workflowTrace, runState.ToSnapshot());
+    }
+
     private async Task<string> CompleteOnceAsync(
         string runId,
         string userInput,
@@ -129,6 +212,25 @@ public sealed class AgentRunner
             ? BuildChatOptions(selectedSkills)
             : null;
 
+        return await CompleteToolLoopAsync(
+            runId,
+            messages,
+            debugMessages,
+            selectedSkills,
+            options,
+            workflowTrace,
+            runState);
+    }
+
+    private async Task<string> CompleteToolLoopAsync(
+        string runId,
+        List<ChatMessage> messages,
+        List<AgentDebugMessage> debugMessages,
+        IReadOnlyList<IAgentSkill> selectedSkills,
+        ChatCompletionOptions? options,
+        AgentWorkflowTrace workflowTrace,
+        AgentRunState runState)
+    {
         AgentToolIterationGuard toolIterationGuard = new(_profile.MaxToolIterations);
         AgentToolResultLimiter toolResultLimiter = new(_profile.MaxToolResultChars);
         AgentToolTimeoutRunner toolTimeoutRunner = new(_profile.ToolTimeoutSeconds);
@@ -173,9 +275,7 @@ public sealed class AgentRunner
             switch (completion.FinishReason)
             {
                 case ChatFinishReason.Stop:
-                    return completion.Content.Count > 0
-                        ? completion.Content[0].Text
-                        : string.Empty;
+                    return ReadTextContent(completion);
 
                 case ChatFinishReason.ToolCalls:
                     toolIterationGuard.RecordToolIteration();
@@ -205,6 +305,11 @@ public sealed class AgentRunner
                     throw new InvalidOperationException($"Unsupported finish reason: {completion.FinishReason}");
             }
         }
+    }
+
+    private static string ReadTextContent(ChatCompletion completion)
+    {
+        return string.Concat(completion.Content.Select(part => part.Text));
     }
 
     private async Task<IReadOnlyList<IAgentSkill>> SelectSkillsForCurrentTurnAsync(
@@ -568,6 +673,54 @@ public sealed class AgentRunner
         return messages;
     }
 
+    private static List<ChatMessage> BuildResumeMessages(
+        IReadOnlyList<AgentCheckpointMessage> checkpointMessages)
+    {
+        List<ChatMessage> messages = [];
+
+        foreach (AgentCheckpointMessage checkpointMessage in checkpointMessages)
+        {
+            messages.Add(checkpointMessage.Role switch
+            {
+                "system" => new SystemChatMessage(checkpointMessage.Content ?? string.Empty),
+                "user" => new UserChatMessage(checkpointMessage.Content ?? string.Empty),
+                "assistant" when checkpointMessage.ToolCalls.Count > 0 =>
+                    BuildAssistantToolCallMessage(checkpointMessage),
+                "assistant" => new AssistantChatMessage(checkpointMessage.Content ?? string.Empty),
+                "tool" => new ToolChatMessage(
+                    RequireCheckpointToolCallId(checkpointMessage),
+                    checkpointMessage.Content ?? string.Empty),
+                _ => throw new InvalidOperationException(
+                    $"Unsupported checkpoint message role: {checkpointMessage.Role}")
+            });
+        }
+
+        return messages;
+    }
+
+    private static AssistantChatMessage BuildAssistantToolCallMessage(
+        AgentCheckpointMessage checkpointMessage)
+    {
+        ChatToolCall[] toolCalls = checkpointMessage.ToolCalls
+            .Select(toolCall => ChatToolCall.CreateFunctionToolCall(
+                toolCall.Id,
+                toolCall.Name,
+                BinaryData.FromString(toolCall.ArgumentsJson)))
+            .ToArray();
+
+        return new AssistantChatMessage(toolCalls);
+    }
+
+    private static string RequireCheckpointToolCallId(AgentCheckpointMessage checkpointMessage)
+    {
+        if (string.IsNullOrWhiteSpace(checkpointMessage.ToolCallId))
+        {
+            throw new InvalidOperationException("Tool checkpoint message requires tool_call_id.");
+        }
+
+        return checkpointMessage.ToolCallId;
+    }
+
     private static void AddCurrentUserInput(
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
@@ -611,6 +764,54 @@ public sealed class AgentRunner
         }
 
         return messages;
+    }
+
+    private static List<AgentDebugMessage> BuildResumeDebugMessages(
+        IReadOnlyList<AgentCheckpointMessage> checkpointMessages)
+    {
+        List<AgentDebugMessage> messages = [];
+
+        foreach (AgentCheckpointMessage checkpointMessage in checkpointMessages)
+        {
+            messages.Add(new AgentDebugMessage
+            {
+                Role = checkpointMessage.Role,
+                Content = checkpointMessage.Content,
+                ToolCallId = checkpointMessage.ToolCallId,
+                ToolCalls = checkpointMessage.ToolCalls
+                    .Select(toolCall => new AgentDebugToolCall(
+                        toolCall.Id,
+                        toolCall.Name,
+                        toolCall.ArgumentsJson))
+                    .ToArray()
+            });
+        }
+
+        return messages;
+    }
+
+    private async Task TrySaveResumedMemoryAsync(
+        AgentRunCheckpoint checkpoint,
+        string assistantReply)
+    {
+        string? userInput = checkpoint.Messages
+            .LastOrDefault(message => message.Role == "user")
+            ?.Content;
+
+        if (string.IsNullOrWhiteSpace(userInput))
+        {
+            return;
+        }
+
+        AgentMemoryWritePolicy memoryWritePolicy = new(_profile.MaxMemoryContentChars);
+        if (!memoryWritePolicy.ShouldWrite(userInput) || !memoryWritePolicy.ShouldWrite(assistantReply))
+        {
+            return;
+        }
+
+        _memory.AddUserMessage(userInput);
+        _memory.AddAssistantMessage(assistantReply);
+        await ChatMemoryStore.SaveAsync(_memoryPath, _memory);
     }
 
     private ChatCompletionOptions BuildChatOptions(IEnumerable<IAgentSkill> selectedSkills)

@@ -21,6 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentLearning.App\AgentLearning.App.csproj" />
     <ProjectReference Include="..\..\src\AgentLearning.Core\AgentLearning.Core.csproj" />
   </ItemGroup>
 

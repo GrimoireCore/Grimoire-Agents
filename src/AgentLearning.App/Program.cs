@@ -56,6 +56,7 @@ AgentSkillRegistry skillRegistry = new([
 
 AgentRunner agentRunner = new(profile, client, memory, memoryPath, skillRegistry);
 agentRunner.CheckpointCreatedAsync = checkpoint => SaveCheckpointAsync(checkpointPath, checkpoint, profile);
+agentRunner.CheckpointConsumedAsync = _ => AgentCheckpointStore.DeleteAsync(checkpointPath);
 agentRunner.ToolConfirmationRequestedAsync = ConfirmToolCallAsync;
 agentRunner.WorkflowStepCreated += step =>
 {
@@ -112,7 +113,7 @@ while (true)
         continue;
     }
 
-    if (await TryResumeCheckpointCommandAsync(input, checkpointPath, profile, client, memory, memoryPath, skillRegistry))
+    if (await TryResumeCheckpointCommandAsync(input, checkpointPath, profile, agentRunner))
     {
         Console.WriteLine();
         continue;
@@ -184,10 +185,7 @@ static async Task<bool> TryResumeCheckpointCommandAsync(
     string input,
     string checkpointPath,
     AgentProfile profile,
-    ChatClient client,
-    ChatMemory memory,
-    string memoryPath,
-    AgentSkillRegistry skillRegistry)
+    AgentRunner agentRunner)
 {
     const string resumeCommand = "/resume";
     if (!input.StartsWith(resumeCommand, StringComparison.OrdinalIgnoreCase))
@@ -211,23 +209,10 @@ static async Task<bool> TryResumeCheckpointCommandAsync(
     }
 
     bool approved = decision.Equals("yes", StringComparison.OrdinalIgnoreCase);
-    AgentCheckpointResumeResult result;
-    string assistantReply;
+    AgentRunResult result;
     try
     {
-        result = await AgentCheckpointResumer.ResumeAsync(
-            checkpoint,
-            approved,
-            skillRegistry);
-
-        // 工具已经执行或已经明确拒绝后，先删除旧 checkpoint，避免下一次 /resume 重复执行同一个工具。
-        await AgentCheckpointStore.DeleteAsync(checkpointPath);
-
-        assistantReply = await CompleteCheckpointResumeAsync(
-            checkpoint,
-            result,
-            client,
-            skillRegistry);
+        result = await agentRunner.ResumeAsync(checkpoint, approved);
     }
     catch (Exception exception)
     {
@@ -238,148 +223,15 @@ static async Task<bool> TryResumeCheckpointCommandAsync(
     Console.WriteLine(approved
         ? "Checkpoint resumed with approval."
         : "Checkpoint resumed with rejection.");
-    Console.WriteLine($"Run: {result.RunId}");
-    Console.WriteLine($"Tool call: {result.ToolCallId}");
-    Console.WriteLine($"Tool: {result.ToolName}");
-    Console.WriteLine($"Tool executed: {result.ToolExecuted}");
-    Console.WriteLine($"Observation: {result.Observation}");
-    Console.WriteLine($"{profile.Name}> {assistantReply}");
+    Console.WriteLine($"{profile.Name}> {result.AssistantReply}");
 
-    await TrySaveResumedMemoryAsync(profile, memory, memoryPath, checkpoint, assistantReply);
+    if (profile.ShowWorkflowTrace)
+    {
+        Console.WriteLine(
+            $"[State] {result.FinalState.Status} | model requests: {result.FinalState.ModelRequestCount} | tool calls: {result.FinalState.ToolCallCount}");
+    }
 
     return true;
-}
-
-static async Task<string> CompleteCheckpointResumeAsync(
-    AgentRunCheckpoint checkpoint,
-    AgentCheckpointResumeResult resumeResult,
-    ChatClient client,
-    AgentSkillRegistry skillRegistry)
-{
-    List<ChatMessage> messages = BuildResumeMessages(checkpoint.Messages);
-
-    // 这条 tool 消息就是“恢复点之后”新补上的观察结果。
-    // 它的 tool_call_id 必须和之前 assistant tool_calls 里的 id 一样。
-    messages.Add(new ToolChatMessage(resumeResult.ToolCallId, resumeResult.Observation));
-
-    ChatCompletionOptions? options = BuildResumeChatOptions(checkpoint, skillRegistry);
-    ChatCompletion completion = await client.CompleteChatAsync(messages, options);
-
-    if (completion.ToolCalls.Count > 0 || completion.FinishReason == ChatFinishReason.ToolCalls)
-    {
-        throw new InvalidOperationException(
-            "Resumed model requested another tool call. This lesson supports one pending approval resume at a time.");
-    }
-
-    return completion.FinishReason switch
-    {
-        ChatFinishReason.Stop => ReadAssistantText(completion),
-        ChatFinishReason.Length => throw new InvalidOperationException(
-            "Model output was cut off because it reached the token limit."),
-        ChatFinishReason.ContentFilter => throw new InvalidOperationException(
-            "Model output was blocked by the content filter."),
-        ChatFinishReason.FunctionCall => throw new InvalidOperationException(
-            "Deprecated function_call was returned. Use tool_calls instead."),
-        _ => throw new InvalidOperationException($"Unsupported finish reason: {completion.FinishReason}")
-    };
-}
-
-static List<ChatMessage> BuildResumeMessages(IReadOnlyList<AgentCheckpointMessage> checkpointMessages)
-{
-    List<ChatMessage> messages = [];
-
-    foreach (AgentCheckpointMessage checkpointMessage in checkpointMessages)
-    {
-        messages.Add(checkpointMessage.Role switch
-        {
-            "system" => new SystemChatMessage(checkpointMessage.Content ?? string.Empty),
-            "user" => new UserChatMessage(checkpointMessage.Content ?? string.Empty),
-            "assistant" when checkpointMessage.ToolCalls.Count > 0 =>
-                BuildAssistantToolCallMessage(checkpointMessage),
-            "assistant" => new AssistantChatMessage(checkpointMessage.Content ?? string.Empty),
-            "tool" => new ToolChatMessage(
-                RequireCheckpointToolCallId(checkpointMessage),
-                checkpointMessage.Content ?? string.Empty),
-            _ => throw new InvalidOperationException(
-                $"Unsupported checkpoint message role: {checkpointMessage.Role}")
-        });
-    }
-
-    return messages;
-}
-
-static AssistantChatMessage BuildAssistantToolCallMessage(AgentCheckpointMessage checkpointMessage)
-{
-    ChatToolCall[] toolCalls = checkpointMessage.ToolCalls
-        .Select(toolCall => ChatToolCall.CreateFunctionToolCall(
-            toolCall.Id,
-            toolCall.Name,
-            BinaryData.FromString(toolCall.ArgumentsJson)))
-        .ToArray();
-
-    return new AssistantChatMessage(toolCalls);
-}
-
-static string RequireCheckpointToolCallId(AgentCheckpointMessage checkpointMessage)
-{
-    if (string.IsNullOrWhiteSpace(checkpointMessage.ToolCallId))
-    {
-        throw new InvalidOperationException("Tool checkpoint message requires tool_call_id.");
-    }
-
-    return checkpointMessage.ToolCallId;
-}
-
-static ChatCompletionOptions? BuildResumeChatOptions(
-    AgentRunCheckpoint checkpoint,
-    AgentSkillRegistry skillRegistry)
-{
-    if (checkpoint.SelectedToolNames.Count == 0)
-    {
-        return null;
-    }
-
-    ChatCompletionOptions options = new();
-    foreach (string toolName in checkpoint.SelectedToolNames)
-    {
-        IAgentSkill skill = skillRegistry.GetRequiredSkill(toolName);
-        options.Tools.Add(ChatTool.CreateFunctionTool(
-            functionName: skill.Name,
-            functionDescription: skill.Description,
-            functionParameters: BinaryData.FromString(skill.ParametersJson)));
-    }
-
-    return options;
-}
-
-static string ReadAssistantText(ChatCompletion completion)
-{
-    string text = string.Concat(completion.Content.Select(part => part.Text));
-    if (string.IsNullOrWhiteSpace(text))
-    {
-        throw new InvalidOperationException("The resumed model returned no text content.");
-    }
-
-    return text;
-}
-
-static async Task TrySaveResumedMemoryAsync(
-    AgentProfile profile,
-    ChatMemory memory,
-    string memoryPath,
-    AgentRunCheckpoint checkpoint,
-    string assistantReply)
-{
-    string? userInput = checkpoint.Messages
-        .LastOrDefault(message => message.Role == "user")
-        ?.Content;
-
-    if (string.IsNullOrWhiteSpace(userInput))
-    {
-        return;
-    }
-
-    await TrySaveLocalSkillMemoryAsync(profile, memory, memoryPath, userInput, assistantReply);
 }
 
 static async Task TrySaveLocalSkillMemoryAsync(
