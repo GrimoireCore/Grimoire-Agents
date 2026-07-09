@@ -124,6 +124,12 @@ while (true)
             Console.WriteLine($"{profile.Name}> {result.AssistantReply}");
         }
 
+        if (profile.ShowWorkflowTrace)
+        {
+            Console.WriteLine(
+                $"[State] {result.FinalState.Status} | model requests: {result.FinalState.ModelRequestCount} | tool calls: {result.FinalState.ToolCallCount}");
+        }
+
         Console.WriteLine();
     }
     catch (Exception exception)

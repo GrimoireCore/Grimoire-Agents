@@ -8,4 +8,5 @@ namespace AgentLearning.App;
 /// </summary>
 public sealed record AgentRunResult(
     string AssistantReply,
-    AgentWorkflowTrace WorkflowTrace);
+    AgentWorkflowTrace WorkflowTrace,
+    AgentRunSnapshot FinalState);

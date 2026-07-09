@@ -39,6 +39,9 @@ public sealed class AgentRunner
     /// <summary>创建调试文本时触发，Program.cs 可以选择打印到控制台。</summary>
     public event Action<string>? DebugMessageCreated;
 
+    /// <summary>Agent 运行状态变化时触发，Program.cs 可以选择展示给用户或 UI。</summary>
+    public event Action<AgentRunSnapshot>? StateChanged;
+
     /// <summary>危险工具需要用户确认时触发。返回 true 才会继续执行工具。</summary>
     public Func<AgentToolConfirmationRequest, Task<bool>>? ToolConfirmationRequestedAsync { get; set; }
 
@@ -54,12 +57,14 @@ public sealed class AgentRunner
         }
 
         AgentWorkflowTrace workflowTrace = new();
+        AgentRunState runState = new();
 
         AgentMemoryWritePolicy memoryWritePolicy = new(_profile.MaxMemoryContentChars);
         bool shouldSaveUserInput = memoryWritePolicy.ShouldWrite(userInput);
 
         AddWorkflowStep(
             workflowTrace,
+            runState,
             AgentWorkflowStepKind.ReceiveInput,
             "Receive user input",
             shouldSaveUserInput
@@ -69,6 +74,7 @@ public sealed class AgentRunner
         IReadOnlyList<ChatTurn> contextTurns = ChatMemoryWindow.GetRecentTurns(_memory, _profile.MaxMemoryTurns);
         AddWorkflowStep(
             workflowTrace,
+            runState,
             AgentWorkflowStepKind.BuildContext,
             "Build context window",
             $"Sending {contextTurns.Count} of {_memory.Turns.Count} saved memory turns plus current input.");
@@ -79,7 +85,7 @@ public sealed class AgentRunner
 
         string assistantReply = _profile.Stream
             ? await CompleteStreamingAsync(messages)
-            : await CompleteOnceAsync(userInput, messages, debugMessages, workflowTrace);
+            : await CompleteOnceAsync(userInput, messages, debugMessages, workflowTrace, runState);
 
         if (string.IsNullOrWhiteSpace(assistantReply))
         {
@@ -88,6 +94,7 @@ public sealed class AgentRunner
 
         AddWorkflowStep(
             workflowTrace,
+            runState,
             AgentWorkflowStepKind.Finish,
             "Finish",
             "Final answer was produced.");
@@ -100,18 +107,19 @@ public sealed class AgentRunner
             await ChatMemoryStore.SaveAsync(_memoryPath, _memory);
         }
 
-        return new AgentRunResult(assistantReply, workflowTrace);
+        return new AgentRunResult(assistantReply, workflowTrace, runState.ToSnapshot());
     }
 
     private async Task<string> CompleteOnceAsync(
         string userInput,
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
-        AgentWorkflowTrace workflowTrace)
+        AgentWorkflowTrace workflowTrace,
+        AgentRunState runState)
     {
         // native_tool_calling 打开时，先让 AI Tool Router 从轻量目录里选工具。
         // 主 Agent 只会收到被选中的工具完整 Schema。
-        IReadOnlyList<IAgentSkill> selectedSkills = await SelectSkillsForCurrentTurnAsync(userInput, workflowTrace);
+        IReadOnlyList<IAgentSkill> selectedSkills = await SelectSkillsForCurrentTurnAsync(userInput, workflowTrace, runState);
         ChatCompletionOptions? options = selectedSkills.Count > 0
             ? BuildChatOptions(selectedSkills)
             : null;
@@ -124,6 +132,7 @@ public sealed class AgentRunner
         {
             AddWorkflowStep(
                 workflowTrace,
+                runState,
                 AgentWorkflowStepKind.AskModel,
                 "Ask model",
                 $"Request #{requestNumber} sent to the model.");
@@ -142,7 +151,7 @@ public sealed class AgentRunner
                 }
 
                 toolIterationGuard.RecordToolIteration();
-                await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, toolResultLimiter, toolTimeoutRunner);
+                await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, runState, toolResultLimiter, toolTimeoutRunner);
                 requestNumber++;
                 continue;
             }
@@ -156,7 +165,7 @@ public sealed class AgentRunner
 
                 case ChatFinishReason.ToolCalls:
                     toolIterationGuard.RecordToolIteration();
-                    await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, toolResultLimiter, toolTimeoutRunner);
+                    await ResolveToolCallsAsync(messages, debugMessages, completion, workflowTrace, runState, toolResultLimiter, toolTimeoutRunner);
                     requestNumber++;
                     break;
 
@@ -177,7 +186,8 @@ public sealed class AgentRunner
 
     private async Task<IReadOnlyList<IAgentSkill>> SelectSkillsForCurrentTurnAsync(
         string userInput,
-        AgentWorkflowTrace workflowTrace)
+        AgentWorkflowTrace workflowTrace,
+        AgentRunState runState)
     {
         if (!_profile.NativeToolCalling || _skillRegistry.Skills.Count == 0)
         {
@@ -188,6 +198,7 @@ public sealed class AgentRunner
         {
             AddWorkflowStep(
                 workflowTrace,
+                runState,
                 AgentWorkflowStepKind.RouteTools,
                 "Route tools",
                 $"Tool router is disabled. Sending all {_skillRegistry.Skills.Count} tools to the main agent.");
@@ -198,6 +209,7 @@ public sealed class AgentRunner
         string catalogJson = AgentToolCatalogBuilder.BuildJson(_skillRegistry.Skills);
         AddWorkflowStep(
             workflowTrace,
+            runState,
             AgentWorkflowStepKind.RouteTools,
             "Route tools",
             $"Sending lightweight catalog with {_skillRegistry.Skills.Count} tools to the AI Tool Router.");
@@ -221,6 +233,7 @@ public sealed class AgentRunner
 
         AddWorkflowStep(
             workflowTrace,
+            runState,
             AgentWorkflowStepKind.RouteTools,
             "Route tools result",
             $"Router selected {selectedToolText}. Reason: {decision.Reason}");
@@ -320,6 +333,7 @@ public sealed class AgentRunner
         List<AgentDebugMessage> debugMessages,
         ChatCompletion completion,
         AgentWorkflowTrace workflowTrace,
+        AgentRunState runState,
         AgentToolResultLimiter toolResultLimiter,
         AgentToolTimeoutRunner toolTimeoutRunner)
     {
@@ -341,12 +355,14 @@ public sealed class AgentRunner
         {
             AddWorkflowStep(
                 workflowTrace,
+                runState,
                 AgentWorkflowStepKind.ToolRequested,
                 "Act",
-                $"Model requested tool '{toolCall.FunctionName}'.");
+                $"Model requested tool '{toolCall.FunctionName}'.",
+                toolName: toolCall.FunctionName);
 
             IAgentSkill skill = _skillRegistry.GetRequiredSkill(toolCall.FunctionName);
-            if (!await ConfirmToolCallIfNeededAsync(workflowTrace, skill, toolCall))
+            if (!await ConfirmToolCallIfNeededAsync(workflowTrace, runState, skill, toolCall))
             {
                 string rejectedResult = AgentToolApprovalObservation.BuildRejected(toolCall.FunctionName);
                 EmitToolResultPreview(toolCall, rejectedResult);
@@ -382,9 +398,12 @@ public sealed class AgentRunner
 
                 AddWorkflowStep(
                     workflowTrace,
+                    runState,
                     AgentWorkflowStepKind.ToolFailed,
                     "Observe tool error",
-                    $"Tool '{toolCall.FunctionName}' failed: {exception.Message}");
+                    $"Tool '{toolCall.FunctionName}' failed: {exception.Message}",
+                    toolName: toolCall.FunctionName,
+                    error: exception.Message);
             }
 
             string result = toolResultLimiter.Limit(rawResult);
@@ -393,9 +412,11 @@ public sealed class AgentRunner
             {
                 AddWorkflowStep(
                     workflowTrace,
+                    runState,
                     AgentWorkflowStepKind.ToolExecuted,
                     "Observe",
-                    $"Tool '{toolCall.FunctionName}' returned: {result}");
+                    $"Tool '{toolCall.FunctionName}' returned: {result}",
+                    toolName: toolCall.FunctionName);
             }
 
             EmitToolResultPreview(toolCall, result);
@@ -413,6 +434,7 @@ public sealed class AgentRunner
 
     private async Task<bool> ConfirmToolCallIfNeededAsync(
         AgentWorkflowTrace workflowTrace,
+        AgentRunState runState,
         IAgentSkill skill,
         ChatToolCall toolCall)
     {
@@ -423,9 +445,11 @@ public sealed class AgentRunner
 
         AddWorkflowStep(
             workflowTrace,
+            runState,
             AgentWorkflowStepKind.ToolApprovalRequested,
             "Request tool approval",
-            $"Tool '{skill.Name}' requires confirmation. Risk: {skill.RiskLevel}.");
+            $"Tool '{skill.Name}' requires confirmation. Risk: {skill.RiskLevel}.",
+            toolName: skill.Name);
 
         if (ToolConfirmationRequestedAsync is null)
         {
@@ -447,9 +471,11 @@ public sealed class AgentRunner
 
         AddWorkflowStep(
             workflowTrace,
+            runState,
             AgentWorkflowStepKind.ToolRejected,
             "Reject tool",
-            $"User rejected tool '{skill.Name}'.");
+            $"User rejected tool '{skill.Name}'.",
+            toolName: skill.Name);
 
         return false;
     }
@@ -537,12 +563,82 @@ public sealed class AgentRunner
 
     private void AddWorkflowStep(
         AgentWorkflowTrace workflowTrace,
+        AgentRunState runState,
         AgentWorkflowStepKind kind,
         string title,
-        string detail)
+        string detail,
+        string? toolName = null,
+        string? error = null)
     {
         AgentWorkflowStep step = workflowTrace.Add(kind, title, detail);
+        ApplyStateTransition(runState, kind, toolName, error);
         WorkflowStepCreated?.Invoke(step);
+        StateChanged?.Invoke(runState.ToSnapshot());
+    }
+
+    private static void ApplyStateTransition(
+        AgentRunState runState,
+        AgentWorkflowStepKind kind,
+        string? toolName,
+        string? error)
+    {
+        switch (kind)
+        {
+            case AgentWorkflowStepKind.ReceiveInput:
+                runState.MarkReceivedInput();
+                break;
+
+            case AgentWorkflowStepKind.BuildContext:
+                runState.MarkBuiltContext();
+                break;
+
+            case AgentWorkflowStepKind.RouteTools:
+                runState.MarkRoutedTools();
+                break;
+
+            case AgentWorkflowStepKind.AskModel:
+                runState.MarkAskedModel();
+                break;
+
+            case AgentWorkflowStepKind.ToolRequested:
+                runState.MarkToolRequested(RequireToolName(toolName, kind));
+                break;
+
+            case AgentWorkflowStepKind.ToolApprovalRequested:
+                runState.MarkWaitingForApproval(RequireToolName(toolName, kind));
+                break;
+
+            case AgentWorkflowStepKind.ToolRejected:
+                runState.MarkToolRejected(RequireToolName(toolName, kind));
+                break;
+
+            case AgentWorkflowStepKind.ToolFailed:
+                runState.MarkToolFailed(
+                    RequireToolName(toolName, kind),
+                    string.IsNullOrWhiteSpace(error) ? "Unknown tool error." : error);
+                break;
+
+            case AgentWorkflowStepKind.ToolExecuted:
+                runState.MarkToolExecuted(RequireToolName(toolName, kind));
+                break;
+
+            case AgentWorkflowStepKind.Finish:
+                runState.MarkFinished();
+                break;
+
+            default:
+                throw new InvalidOperationException($"Unsupported workflow step kind: {kind}");
+        }
+    }
+
+    private static string RequireToolName(string? toolName, AgentWorkflowStepKind kind)
+    {
+        if (string.IsNullOrWhiteSpace(toolName))
+        {
+            throw new InvalidOperationException($"Workflow step '{kind}' requires a tool name for state tracking.");
+        }
+
+        return toolName;
     }
 
     private void EmitChatRequestPreview(
