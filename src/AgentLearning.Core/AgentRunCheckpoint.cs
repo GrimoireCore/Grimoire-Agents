@@ -4,39 +4,42 @@ using System.Text.Json.Serialization;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// Agent 暂停运行时保存的恢复点。
-/// 它保存足够多的运行现场，让下一次启动可以继续同一轮模型工具循环。
+/// Durable snapshot used to resume an interrupted agent run.
 /// </summary>
 public sealed record AgentRunCheckpoint(
-    /// <summary>一次 Agent 运行的唯一 ID。</summary>
+    /// <summary>The unique ID for one agent run.</summary>
     [property: JsonPropertyName("run_id")]
     string RunId,
 
-    /// <summary>Checkpoint 类型。</summary>
+    /// <summary>The checkpoint kind.</summary>
     [property: JsonPropertyName("kind")]
     AgentCheckpointKind Kind,
 
-    /// <summary>Checkpoint 创建时间。</summary>
+    /// <summary>When this checkpoint was created.</summary>
     [property: JsonPropertyName("created_at")]
     DateTimeOffset CreatedAt,
 
-    /// <summary>暂停时的运行状态快照。</summary>
+    /// <summary>The run state snapshot at the checkpoint moment.</summary>
     [property: JsonPropertyName("state")]
     AgentRunSnapshot State,
 
-    /// <summary>暂停前已经发送给模型的消息快照。</summary>
+    /// <summary>The model message snapshot captured before pausing.</summary>
     [property: JsonPropertyName("messages")]
     IReadOnlyList<AgentCheckpointMessage> Messages,
 
-    /// <summary>暂停前主 Agent 这一轮拿到的工具名。</summary>
+    /// <summary>The tool names exposed to the main agent for this run.</summary>
     [property: JsonPropertyName("selected_tool_names")]
     IReadOnlyList<string> SelectedToolNames,
 
-    /// <summary>如果当前在等待工具确认，这里保存待确认工具信息。</summary>
+    /// <summary>The pending tool approval data, when the run is waiting for approval.</summary>
     [property: JsonPropertyName("pending_approval")]
-    PendingToolApproval? PendingApproval)
+    PendingToolApproval? PendingApproval,
+
+    /// <summary>The resolved tool result, when the run already has an observation to send back.</summary>
+    [property: JsonPropertyName("resolved_tool")]
+    ResolvedToolCall? ResolvedTool)
 {
-    /// <summary>创建等待工具确认的 Checkpoint。</summary>
+    /// <summary>Create a checkpoint while waiting for tool approval.</summary>
     public static AgentRunCheckpoint CreatePendingApproval(
         string runId,
         DateTimeOffset createdAt,
@@ -63,6 +66,38 @@ public sealed record AgentRunCheckpoint(
             state,
             messages.ToArray(),
             selectedToolNames.Select(toolName => toolName.Trim()).ToArray(),
-            PendingToolApproval.FromConfirmationRequest(request));
+            PendingToolApproval.FromConfirmationRequest(request),
+            ResolvedTool: null);
+    }
+
+    /// <summary>Create a checkpoint after a tool has been resolved but before the model finishes.</summary>
+    public static AgentRunCheckpoint CreateToolResolved(
+        string runId,
+        DateTimeOffset createdAt,
+        AgentRunSnapshot state,
+        IReadOnlyList<AgentCheckpointMessage> messages,
+        IReadOnlyList<string> selectedToolNames,
+        ResolvedToolCall resolvedTool)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(messages);
+        ArgumentNullException.ThrowIfNull(selectedToolNames);
+        ArgumentNullException.ThrowIfNull(resolvedTool);
+
+        if (state.Status is not AgentRunStatus.ToolExecuted and not AgentRunStatus.ToolRejected)
+        {
+            throw new InvalidOperationException("Tool resolved checkpoint requires state ToolExecuted or ToolRejected.");
+        }
+
+        return new AgentRunCheckpoint(
+            runId.Trim(),
+            AgentCheckpointKind.ToolResolved,
+            createdAt,
+            state,
+            messages.ToArray(),
+            selectedToolNames.Select(toolName => toolName.Trim()).ToArray(),
+            PendingApproval: null,
+            resolvedTool);
     }
 }

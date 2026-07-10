@@ -3,13 +3,12 @@ using AgentLearning.Core.Skills;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 根据 Checkpoint 恢复工具确认后的动作。
-/// 注意：第一版只恢复工具执行，不恢复完整模型上下文。
+/// Resolves the tool step represented by a checkpoint.
 /// </summary>
 public static class AgentCheckpointResumer
 {
     /// <summary>
-    /// 根据用户是否批准，执行待确认工具，或生成拒绝 observation。
+    /// Execute a pending tool, reject it, or reuse an already resolved tool observation.
     /// </summary>
     public static async Task<AgentCheckpointResumeResult> ResumeAsync(
         AgentRunCheckpoint checkpoint,
@@ -19,6 +18,20 @@ public static class AgentCheckpointResumer
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         ArgumentNullException.ThrowIfNull(skillRegistry);
+
+        if (checkpoint.Kind == AgentCheckpointKind.ToolResolved)
+        {
+            ResolvedToolCall resolvedTool = checkpoint.ResolvedTool
+                ?? throw new InvalidOperationException("Checkpoint does not contain resolved tool data.");
+
+            return new AgentCheckpointResumeResult(
+                checkpoint.RunId,
+                resolvedTool.ToolCallId,
+                resolvedTool.ToolName,
+                resolvedTool.Approved,
+                resolvedTool.ToolExecuted,
+                resolvedTool.Observation);
+        }
 
         if (checkpoint.Kind != AgentCheckpointKind.PendingToolApproval)
         {

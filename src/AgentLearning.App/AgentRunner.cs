@@ -52,14 +52,11 @@ public sealed class AgentRunner
     /// <summary>Agent 运行状态变化时触发，Program.cs 可以选择展示给用户或 UI。</summary>
     public event Action<AgentRunSnapshot>? StateChanged;
 
-    /// <summary>Agent 创建恢复点时触发，Program.cs 可以选择保存到文件或数据库。</summary>
+    /// <summary>Raised when the runner creates or updates a checkpoint.</summary>
     public Func<AgentRunCheckpoint, Task>? CheckpointCreatedAsync { get; set; }
 
-    /// <summary>Agent 已经消费恢复点时触发，Program.cs 可以选择删除对应的 Checkpoint 文件。</summary>
+    /// <summary>Raised when a checkpoint is fully completed and can be removed.</summary>
     public Func<AgentRunCheckpoint, Task>? CheckpointConsumedAsync { get; set; }
-
-    /// <summary>危险工具需要用户确认时触发。返回 true 才会继续执行工具。</summary>
-    public Func<AgentToolConfirmationRequest, Task<bool>>? ToolConfirmationRequestedAsync { get; set; }
 
     /// <summary>
     /// 运行一轮 Agent。
@@ -100,9 +97,22 @@ public sealed class AgentRunner
         List<AgentDebugMessage> debugMessages = BuildDebugMessages(contextTurns);
         AddCurrentUserInput(messages, debugMessages, userInput);
 
-        string assistantReply = _profile.Stream
-            ? await CompleteStreamingAsync(messages)
+        AgentLoopResult loopResult = _profile.Stream
+            ? AgentLoopResult.Completed(await CompleteStreamingAsync(messages))
             : await CompleteOnceAsync(runId, userInput, messages, debugMessages, workflowTrace, runState);
+
+        if (loopResult.PendingApproval is not null)
+        {
+            return new AgentRunResult(
+                AgentRunOutcome.WaitingForApproval,
+                AssistantReply: null,
+                loopResult.PendingApproval,
+                workflowTrace,
+                runState.ToSnapshot());
+        }
+
+        string assistantReply = loopResult.AssistantReply
+            ?? throw new InvalidOperationException("A completed agent run must contain an assistant reply.");
 
         if (string.IsNullOrWhiteSpace(assistantReply))
         {
@@ -124,16 +134,26 @@ public sealed class AgentRunner
             await ChatMemoryStore.SaveAsync(_memoryPath, _memory);
         }
 
-        return new AgentRunResult(assistantReply, workflowTrace, runState.ToSnapshot());
+        return new AgentRunResult(
+            AgentRunOutcome.Completed,
+            assistantReply,
+            PendingApproval: null,
+            workflowTrace,
+            runState.ToSnapshot());
     }
 
     /// <summary>
-    /// 从等待工具确认的 Checkpoint 恢复运行。
-    /// 它会先执行或拒绝那个待确认工具，再回到完整的模型工具循环里继续跑。
+    /// Resume a run from a checkpoint and continue through the normal model/tool loop.
     /// </summary>
     public async Task<AgentRunResult> ResumeAsync(AgentRunCheckpoint checkpoint, bool approved)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
+
+        if (checkpoint.Kind == AgentCheckpointKind.PendingToolApproval && CheckpointCreatedAsync is null)
+        {
+            throw new InvalidOperationException(
+                "A checkpoint persistence handler is required before a pending tool can be resumed.");
+        }
 
         AgentWorkflowTrace workflowTrace = new();
         AgentRunState runState = new();
@@ -142,11 +162,6 @@ public sealed class AgentRunner
             checkpoint,
             approved,
             _skillRegistry);
-
-        if (CheckpointConsumedAsync is not null)
-        {
-            await CheckpointConsumedAsync(checkpoint);
-        }
 
         AddWorkflowStep(
             workflowTrace,
@@ -158,11 +173,19 @@ public sealed class AgentRunner
             resumeResult.Observation,
             toolName: resumeResult.ToolName);
 
+        AgentRunCheckpoint checkpointToConsume = checkpoint;
+        if (checkpoint.Kind == AgentCheckpointKind.PendingToolApproval)
+        {
+            checkpointToConsume = await SaveToolResolvedCheckpointAsync(
+                checkpoint,
+                resumeResult,
+                runState);
+        }
+
         List<ChatMessage> messages = BuildResumeMessages(checkpoint.Messages);
         List<AgentDebugMessage> debugMessages = BuildResumeDebugMessages(checkpoint.Messages);
 
-        // 恢复点之后补上的工具观察结果。
-        // tool_call_id 必须和 checkpoint 里 assistant tool_calls 的 id 一致。
+        // The restored tool observation must match the assistant tool_call_id in the checkpoint.
         messages.Add(new ToolChatMessage(resumeResult.ToolCallId, resumeResult.Observation));
         debugMessages.Add(new AgentDebugMessage
         {
@@ -176,7 +199,7 @@ public sealed class AgentRunner
             ? BuildChatOptions(selectedSkills)
             : null;
 
-        string assistantReply = await CompleteToolLoopAsync(
+        AgentLoopResult loopResult = await CompleteToolLoopAsync(
             checkpoint.RunId,
             messages,
             debugMessages,
@@ -184,6 +207,19 @@ public sealed class AgentRunner
             options,
             workflowTrace,
             runState);
+
+        if (loopResult.PendingApproval is not null)
+        {
+            return new AgentRunResult(
+                AgentRunOutcome.WaitingForApproval,
+                AssistantReply: null,
+                loopResult.PendingApproval,
+                workflowTrace,
+                runState.ToSnapshot());
+        }
+
+        string assistantReply = loopResult.AssistantReply
+            ?? throw new InvalidOperationException("A completed resumed run must contain an assistant reply.");
 
         AddWorkflowStep(
             workflowTrace,
@@ -194,10 +230,40 @@ public sealed class AgentRunner
 
         await TrySaveResumedMemoryAsync(checkpoint, assistantReply);
 
-        return new AgentRunResult(assistantReply, workflowTrace, runState.ToSnapshot());
+        if (CheckpointConsumedAsync is not null)
+        {
+            await CheckpointConsumedAsync(checkpointToConsume);
+        }
+
+        return new AgentRunResult(
+            AgentRunOutcome.Completed,
+            assistantReply,
+            PendingApproval: null,
+            workflowTrace,
+            runState.ToSnapshot());
     }
 
-    private async Task<string> CompleteOnceAsync(
+    private async Task<AgentRunCheckpoint> SaveToolResolvedCheckpointAsync(
+        AgentRunCheckpoint sourceCheckpoint,
+        AgentCheckpointResumeResult resumeResult,
+        AgentRunState runState)
+    {
+        AgentRunCheckpoint resolvedCheckpoint = AgentRunCheckpoint.CreateToolResolved(
+            sourceCheckpoint.RunId,
+            DateTimeOffset.Now,
+            runState.ToSnapshot(),
+            sourceCheckpoint.Messages,
+            sourceCheckpoint.SelectedToolNames,
+            ResolvedToolCall.FromResumeResult(resumeResult));
+
+        Func<AgentRunCheckpoint, Task> checkpointHandler = CheckpointCreatedAsync
+            ?? throw new InvalidOperationException("A checkpoint persistence handler is required during resume.");
+        await checkpointHandler(resolvedCheckpoint);
+
+        return resolvedCheckpoint;
+    }
+
+    private async Task<AgentLoopResult> CompleteOnceAsync(
         string runId,
         string userInput,
         List<ChatMessage> messages,
@@ -222,7 +288,7 @@ public sealed class AgentRunner
             runState);
     }
 
-    private async Task<string> CompleteToolLoopAsync(
+    private async Task<AgentLoopResult> CompleteToolLoopAsync(
         string runId,
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
@@ -257,8 +323,14 @@ public sealed class AgentRunner
                     throw new InvalidOperationException("The model returned tool calls, but native tool calling is disabled.");
                 }
 
+                if (completion.ToolCalls.Count > 1)
+                {
+                    throw new InvalidOperationException(
+                        "The model returned multiple tool calls even though parallel tool calls are disabled.");
+                }
+
                 toolIterationGuard.RecordToolIteration();
-                await ResolveToolCallsAsync(
+                AgentToolConfirmationRequest? pendingApproval = await ResolveToolCallsAsync(
                     runId,
                     messages,
                     debugMessages,
@@ -268,6 +340,12 @@ public sealed class AgentRunner
                     runState,
                     toolResultLimiter,
                     toolTimeoutRunner);
+
+                if (pendingApproval is not null)
+                {
+                    return AgentLoopResult.Paused(pendingApproval);
+                }
+
                 requestNumber++;
                 continue;
             }
@@ -275,22 +353,11 @@ public sealed class AgentRunner
             switch (completion.FinishReason)
             {
                 case ChatFinishReason.Stop:
-                    return ReadTextContent(completion);
+                    return AgentLoopResult.Completed(ReadTextContent(completion));
 
                 case ChatFinishReason.ToolCalls:
-                    toolIterationGuard.RecordToolIteration();
-                    await ResolveToolCallsAsync(
-                        runId,
-                        messages,
-                        debugMessages,
-                        selectedSkills,
-                        completion,
-                        workflowTrace,
-                        runState,
-                        toolResultLimiter,
-                        toolTimeoutRunner);
-                    requestNumber++;
-                    break;
+                    throw new InvalidOperationException(
+                        "The model returned finish_reason 'tool_calls' without any tool calls.");
 
                 case ChatFinishReason.Length:
                     throw new InvalidOperationException("Model output was cut off because it reached the token limit.");
@@ -456,7 +523,7 @@ public sealed class AgentRunner
         return fullReply.ToString();
     }
 
-    private async Task ResolveToolCallsAsync(
+    private async Task<AgentToolConfirmationRequest?> ResolveToolCallsAsync(
         string runId,
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
@@ -492,27 +559,17 @@ public sealed class AgentRunner
                 toolName: toolCall.FunctionName);
 
             IAgentSkill skill = _skillRegistry.GetRequiredSkill(toolCall.FunctionName);
-            if (!await ConfirmToolCallIfNeededAsync(
+            AgentToolConfirmationRequest? pendingApproval = await PauseForToolApprovalIfNeededAsync(
                 runId,
                 workflowTrace,
                 runState,
                 debugMessages,
                 selectedSkills,
                 skill,
-                toolCall))
+                toolCall);
+            if (pendingApproval is not null)
             {
-                string rejectedResult = AgentToolApprovalObservation.BuildRejected(toolCall.FunctionName);
-                EmitToolResultPreview(toolCall, rejectedResult);
-
-                messages.Add(new ToolChatMessage(toolCall.Id, rejectedResult));
-                debugMessages.Add(new AgentDebugMessage
-                {
-                    Role = "tool",
-                    ToolCallId = toolCall.Id,
-                    Content = rejectedResult
-                });
-
-                continue;
+                return pendingApproval;
             }
 
             string rawResult;
@@ -567,9 +624,11 @@ public sealed class AgentRunner
                 Content = result
             });
         }
+
+        return null;
     }
 
-    private async Task<bool> ConfirmToolCallIfNeededAsync(
+    private async Task<AgentToolConfirmationRequest?> PauseForToolApprovalIfNeededAsync(
         string runId,
         AgentWorkflowTrace workflowTrace,
         AgentRunState runState,
@@ -580,7 +639,7 @@ public sealed class AgentRunner
     {
         if (!AgentToolPermissionPolicy.RequiresConfirmation(skill))
         {
-            return true;
+            return null;
         }
 
         AddWorkflowStep(
@@ -591,12 +650,6 @@ public sealed class AgentRunner
             $"Tool '{skill.Name}' requires confirmation. Risk: {skill.RiskLevel}.",
             toolName: skill.Name);
 
-        if (ToolConfirmationRequestedAsync is null)
-        {
-            throw new InvalidOperationException(
-                $"Tool '{skill.Name}' requires confirmation, but no confirmation handler was configured.");
-        }
-
         AgentToolConfirmationRequest request = new(
             ToolCallId: toolCall.Id,
             ToolName: skill.Name,
@@ -604,36 +657,20 @@ public sealed class AgentRunner
             ArgumentsJson: toolCall.FunctionArguments.ToString(),
             RiskLevel: skill.RiskLevel);
 
-        await CreateCheckpointIfHandlerExistsAsync(runId, request, runState, debugMessages, selectedSkills);
-
-        bool approved = await ToolConfirmationRequestedAsync(request);
-        if (approved)
-        {
-            return true;
-        }
-
-        AddWorkflowStep(
-            workflowTrace,
-            runState,
-            AgentWorkflowStepKind.ToolRejected,
-            "Reject tool",
-            $"User rejected tool '{skill.Name}'.",
-            toolName: skill.Name);
-
-        return false;
+        await CreatePendingApprovalCheckpointAsync(runId, request, runState, debugMessages, selectedSkills);
+        return request;
     }
 
-    private async Task CreateCheckpointIfHandlerExistsAsync(
+    private async Task CreatePendingApprovalCheckpointAsync(
         string runId,
         AgentToolConfirmationRequest request,
         AgentRunState runState,
         IReadOnlyList<AgentDebugMessage> debugMessages,
         IReadOnlyList<IAgentSkill> selectedSkills)
     {
-        if (CheckpointCreatedAsync is null)
-        {
-            return;
-        }
+        Func<AgentRunCheckpoint, Task> checkpointHandler = CheckpointCreatedAsync
+            ?? throw new InvalidOperationException(
+                "A checkpoint persistence handler is required when a tool needs approval.");
 
         IReadOnlyList<AgentCheckpointMessage> checkpointMessages =
             AgentCheckpointMessageBuilder.FromDebugMessages(debugMessages);
@@ -649,7 +686,7 @@ public sealed class AgentRunner
             checkpointMessages,
             selectedToolNames);
 
-        await CheckpointCreatedAsync(checkpoint);
+        await checkpointHandler(checkpoint);
     }
 
     private List<ChatMessage> BuildMessages(IReadOnlyList<ChatTurn> contextTurns)
@@ -816,7 +853,10 @@ public sealed class AgentRunner
 
     private ChatCompletionOptions BuildChatOptions(IEnumerable<IAgentSkill> selectedSkills)
     {
-        ChatCompletionOptions options = new();
+        ChatCompletionOptions options = new()
+        {
+            AllowParallelToolCalls = false
+        };
 
         foreach (IAgentSkill skill in selectedSkills)
         {
@@ -1044,5 +1084,21 @@ public sealed class AgentRunner
         Instructions:
         {_profile.Instructions}
         """;
+    }
+
+    private sealed record AgentLoopResult(
+        string? AssistantReply,
+        AgentToolConfirmationRequest? PendingApproval)
+    {
+        public static AgentLoopResult Completed(string assistantReply)
+        {
+            return new AgentLoopResult(assistantReply, PendingApproval: null);
+        }
+
+        public static AgentLoopResult Paused(AgentToolConfirmationRequest pendingApproval)
+        {
+            ArgumentNullException.ThrowIfNull(pendingApproval);
+            return new AgentLoopResult(AssistantReply: null, pendingApproval);
+        }
     }
 }

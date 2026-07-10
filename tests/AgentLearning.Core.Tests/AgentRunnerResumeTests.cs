@@ -21,8 +21,13 @@ public sealed class AgentRunnerResumeTests
                 "get_current_time",
                 "{}"),
             CreateTextCompletion("笔记已保存，我又查了一次当前时间。"));
+        AgentRunCheckpoint? savedResolvedCheckpoint = null;
         bool checkpointConsumed = false;
-        chatClient.BeforeCompleteChatAsync = () => Assert.True(checkpointConsumed);
+        chatClient.BeforeCompleteChatAsync = () =>
+        {
+            Assert.NotNull(savedResolvedCheckpoint);
+            Assert.False(checkpointConsumed);
+        };
 
         AgentRunner runner = new(
             CreateProfile(),
@@ -33,6 +38,58 @@ public sealed class AgentRunnerResumeTests
                 new WriteNoteSkill(notesPath),
                 new TimeSkill()
             ]));
+        runner.CheckpointCreatedAsync = createdCheckpoint =>
+        {
+            savedResolvedCheckpoint = createdCheckpoint;
+            return Task.CompletedTask;
+        };
+        runner.CheckpointConsumedAsync = consumedCheckpoint =>
+        {
+            Assert.Same(savedResolvedCheckpoint, consumedCheckpoint);
+            checkpointConsumed = true;
+            return Task.CompletedTask;
+        };
+
+        AgentRunResult result = await runner.ResumeAsync(checkpoint, approved: true);
+
+        Assert.Equal(AgentRunOutcome.Completed, result.Outcome);
+        Assert.NotNull(savedResolvedCheckpoint);
+        Assert.Equal(AgentCheckpointKind.ToolResolved, savedResolvedCheckpoint.Kind);
+        Assert.NotNull(savedResolvedCheckpoint.ResolvedTool);
+        Assert.Equal("call_write", savedResolvedCheckpoint.ResolvedTool.ToolCallId);
+        Assert.Equal("write_note", savedResolvedCheckpoint.ResolvedTool.ToolName);
+        Assert.True(savedResolvedCheckpoint.ResolvedTool.ToolExecuted);
+        Assert.Contains("Note saved to", savedResolvedCheckpoint.ResolvedTool.Observation);
+        Assert.True(checkpointConsumed);
+        Assert.Equal("笔记已保存，我又查了一次当前时间。", result.AssistantReply);
+        Assert.Equal(AgentRunStatus.Finished, result.FinalState.Status);
+        Assert.Equal(2, result.FinalState.ModelRequestCount);
+        Assert.Equal(1, result.FinalState.ToolCallCount);
+        Assert.Equal(2, chatClient.Requests.Count);
+        Assert.Contains("ResumeAsync 第二轮测试", await File.ReadAllTextAsync(notesPath));
+    }
+
+    [Fact]
+    public async Task ResumeAsync_uses_tool_resolved_checkpoint_without_executing_tool_again()
+    {
+        string tempDirectory = CreateTempDirectory();
+        string memoryPath = Path.Combine(tempDirectory, "memory.json");
+        string notesPath = Path.Combine(tempDirectory, "notes.md");
+        AgentRunCheckpoint checkpoint = CreateToolResolvedCheckpoint();
+
+        FakeAgentChatClient chatClient = new(CreateTextCompletion("继续完成回答。"));
+        bool checkpointConsumed = false;
+
+        AgentRunner runner = new(
+            CreateProfile(),
+            chatClient,
+            new ChatMemory(),
+            memoryPath,
+            new AgentSkillRegistry([
+                new WriteNoteSkill(notesPath),
+                new TimeSkill()
+            ]));
+        runner.CheckpointCreatedAsync = _ => throw new InvalidOperationException("ToolResolved resume should not create another checkpoint.");
         runner.CheckpointConsumedAsync = consumedCheckpoint =>
         {
             Assert.Same(checkpoint, consumedCheckpoint);
@@ -42,13 +99,70 @@ public sealed class AgentRunnerResumeTests
 
         AgentRunResult result = await runner.ResumeAsync(checkpoint, approved: true);
 
+        Assert.Equal(AgentRunOutcome.Completed, result.Outcome);
         Assert.True(checkpointConsumed);
-        Assert.Equal("笔记已保存，我又查了一次当前时间。", result.AssistantReply);
-        Assert.Equal(AgentRunStatus.Finished, result.FinalState.Status);
-        Assert.Equal(2, result.FinalState.ModelRequestCount);
-        Assert.Equal(1, result.FinalState.ToolCallCount);
-        Assert.Equal(2, chatClient.Requests.Count);
-        Assert.Contains("ResumeAsync 第二轮测试", await File.ReadAllTextAsync(notesPath));
+        Assert.Equal("继续完成回答。", result.AssistantReply);
+        Assert.False(File.Exists(notesPath));
+        Assert.Single(chatClient.Requests);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_pauses_again_when_model_requests_another_protected_tool()
+    {
+        string tempDirectory = CreateTempDirectory();
+        string memoryPath = Path.Combine(tempDirectory, "memory.json");
+        string notesPath = Path.Combine(tempDirectory, "notes.md");
+        AgentRunCheckpoint checkpoint = CreatePendingWriteNoteCheckpoint();
+        FakeAgentChatClient chatClient = new(
+            CreateToolCallCompletion(
+                "call_write_again",
+                "write_note",
+                "{\"note\":\"Second note must wait\"}"));
+
+        List<AgentRunCheckpoint> savedCheckpoints = [];
+        bool checkpointConsumed = false;
+        AgentRunner runner = new(
+            CreateProfile(),
+            chatClient,
+            new ChatMemory(),
+            memoryPath,
+            new AgentSkillRegistry([
+                new WriteNoteSkill(notesPath),
+                new TimeSkill()
+            ]));
+        runner.CheckpointCreatedAsync = createdCheckpoint =>
+        {
+            savedCheckpoints.Add(createdCheckpoint);
+            return Task.CompletedTask;
+        };
+        runner.CheckpointConsumedAsync = _ =>
+        {
+            checkpointConsumed = true;
+            return Task.CompletedTask;
+        };
+
+        AgentRunResult result = await runner.ResumeAsync(checkpoint, approved: true);
+
+        Assert.Equal(AgentRunOutcome.WaitingForApproval, result.Outcome);
+        Assert.Null(result.AssistantReply);
+        Assert.Equal("call_write_again", result.PendingApproval?.ToolCallId);
+        Assert.Equal(AgentRunStatus.WaitingForApproval, result.FinalState.Status);
+        Assert.False(checkpointConsumed);
+
+        Assert.Collection(
+            savedCheckpoints,
+            resolved => Assert.Equal(AgentCheckpointKind.ToolResolved, resolved.Kind),
+            pending =>
+            {
+                Assert.Equal(AgentCheckpointKind.PendingToolApproval, pending.Kind);
+                Assert.Equal("call_write_again", pending.PendingApproval?.ToolCallId);
+            });
+
+        string notes = await File.ReadAllTextAsync(notesPath);
+        Assert.Contains("ResumeAsync 第二轮测试", notes);
+        Assert.DoesNotContain("Second note must wait", notes);
+        Assert.False(File.Exists(memoryPath));
+        Assert.Single(chatClient.Requests);
     }
 
     private static AgentProfile CreateProfile()
@@ -113,6 +227,41 @@ public sealed class AgentRunnerResumeTests
             state: snapshot,
             messages: messages,
             selectedToolNames: ["write_note", "get_current_time"]);
+    }
+
+    private static AgentRunCheckpoint CreateToolResolvedCheckpoint()
+    {
+        AgentRunSnapshot snapshot = new(
+            Status: AgentRunStatus.ToolExecuted,
+            ModelRequestCount: 1,
+            ToolCallCount: 1,
+            LastToolName: "write_note",
+            WaitingForApproval: false,
+            LastError: null);
+
+        return AgentRunCheckpoint.CreateToolResolved(
+            runId: "run_resolved_test",
+            createdAt: new DateTimeOffset(2026, 7, 10, 10, 30, 0, TimeSpan.FromHours(8)),
+            state: snapshot,
+            messages:
+            [
+                AgentCheckpointMessage.Text("system", "You are a test agent."),
+                AgentCheckpointMessage.Text("user", "保存笔记"),
+                AgentCheckpointMessage.AssistantToolCalls(
+                [
+                    new AgentCheckpointToolCall(
+                        Id: "call_write",
+                        Name: "write_note",
+                        ArgumentsJson: """{"note":"Do not write again"}""")
+                ])
+            ],
+            selectedToolNames: ["write_note"],
+            resolvedTool: new ResolvedToolCall(
+                ToolCallId: "call_write",
+                ToolName: "write_note",
+                Approved: true,
+                ToolExecuted: true,
+                Observation: "Note saved earlier."));
     }
 
     private static ChatCompletion CreateTextCompletion(string text)

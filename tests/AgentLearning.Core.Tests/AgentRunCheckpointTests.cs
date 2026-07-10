@@ -91,4 +91,53 @@ public sealed class AgentRunCheckpointTests
 
         Assert.Contains("WaitingForApproval", exception.Message);
     }
+
+    [Fact]
+    public void CreateToolResolved_captures_tool_result_without_pending_approval()
+    {
+        AgentRunSnapshot snapshot = new(
+            Status: AgentRunStatus.ToolExecuted,
+            ModelRequestCount: 1,
+            ToolCallCount: 1,
+            LastToolName: "write_note",
+            WaitingForApproval: false,
+            LastError: null);
+
+        AgentCheckpointMessage[] messages =
+        [
+            AgentCheckpointMessage.Text("system", "You are a teacher."),
+            AgentCheckpointMessage.Text("user", "please save a note"),
+            AgentCheckpointMessage.AssistantToolCalls(
+            [
+                new AgentCheckpointToolCall(
+                    Id: "call_123",
+                    Name: "write_note",
+                    ArgumentsJson: """{"note":"hello"}""")
+            ])
+        ];
+
+        ResolvedToolCall resolvedTool = new(
+            ToolCallId: "call_123",
+            ToolName: "write_note",
+            Approved: true,
+            ToolExecuted: true,
+            Observation: "Note saved.");
+
+        AgentRunCheckpoint checkpoint = AgentRunCheckpoint.CreateToolResolved(
+            runId: "run_abc",
+            createdAt: new DateTimeOffset(2026, 7, 10, 9, 30, 0, TimeSpan.FromHours(8)),
+            state: snapshot,
+            messages: messages,
+            selectedToolNames: ["write_note"],
+            resolvedTool: resolvedTool);
+
+        Assert.Equal(AgentCheckpointKind.ToolResolved, checkpoint.Kind);
+        Assert.Null(checkpoint.PendingApproval);
+        Assert.NotNull(checkpoint.ResolvedTool);
+        Assert.Equal("call_123", checkpoint.ResolvedTool.ToolCallId);
+        Assert.Equal("write_note", checkpoint.ResolvedTool.ToolName);
+        Assert.True(checkpoint.ResolvedTool.Approved);
+        Assert.True(checkpoint.ResolvedTool.ToolExecuted);
+        Assert.Equal("Note saved.", checkpoint.ResolvedTool.Observation);
+    }
 }

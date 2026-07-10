@@ -57,7 +57,6 @@ AgentSkillRegistry skillRegistry = new([
 AgentRunner agentRunner = new(profile, client, memory, memoryPath, skillRegistry);
 agentRunner.CheckpointCreatedAsync = checkpoint => SaveCheckpointAsync(checkpointPath, checkpoint, profile);
 agentRunner.CheckpointConsumedAsync = _ => AgentCheckpointStore.DeleteAsync(checkpointPath);
-agentRunner.ToolConfirmationRequestedAsync = ConfirmToolCallAsync;
 agentRunner.WorkflowStepCreated += step =>
 {
     if (profile.ShowWorkflowTrace)
@@ -125,14 +124,19 @@ while (true)
         continue;
     }
 
+    AgentRunCheckpoint? unfinishedCheckpoint = await AgentCheckpointStore.LoadAsync(checkpointPath);
+    if (unfinishedCheckpoint is not null)
+    {
+        Console.WriteLine($"Run {unfinishedCheckpoint.RunId} is still waiting to be resumed.");
+        Console.WriteLine("Use /resume yes to approve it or /resume no to reject it before starting another agent run.");
+        Console.WriteLine();
+        continue;
+    }
+
     try
     {
         AgentRunResult result = await agentRunner.RunAsync(input);
-
-        if (!profile.Stream)
-        {
-            Console.WriteLine($"{profile.Name}> {result.AssistantReply}");
-        }
+        PrintAgentRunResult(result, profile, printCompletedReply: !profile.Stream);
 
         if (profile.ShowWorkflowTrace)
         {
@@ -223,7 +227,7 @@ static async Task<bool> TryResumeCheckpointCommandAsync(
     Console.WriteLine(approved
         ? "Checkpoint resumed with approval."
         : "Checkpoint resumed with rejection.");
-    Console.WriteLine($"{profile.Name}> {result.AssistantReply}");
+    PrintAgentRunResult(result, profile, printCompletedReply: true);
 
     if (profile.ShowWorkflowTrace)
     {
@@ -265,36 +269,27 @@ static async Task SaveCheckpointAsync(
     }
 }
 
-static Task<bool> ConfirmToolCallAsync(AgentToolConfirmationRequest request)
+static void PrintAgentRunResult(
+    AgentRunResult result,
+    AgentProfile profile,
+    bool printCompletedReply)
 {
-    Console.WriteLine();
-    Console.WriteLine("Tool confirmation required");
-    Console.WriteLine($"Tool: {request.ToolName}");
-    Console.WriteLine($"Risk: {request.RiskLevel}");
-    Console.WriteLine($"Description: {request.Description}");
-    Console.WriteLine($"Arguments: {AgentDebugPreviewBuilder.RedactSensitiveValues(request.ArgumentsJson)}");
-
-    while (true)
+    if (result.Outcome == AgentRunOutcome.WaitingForApproval)
     {
-        Console.Write("Allow this tool call? Type yes or no: ");
-        string? answer = Console.ReadLine();
-        if (answer is null)
-        {
-            return Task.FromResult(false);
-        }
+        AgentToolConfirmationRequest request = result.PendingApproval
+            ?? throw new InvalidOperationException("A paused run must contain pending approval data.");
 
-        if (answer.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-            answer.Equals("y", StringComparison.OrdinalIgnoreCase))
-        {
-            return Task.FromResult(true);
-        }
+        Console.WriteLine("Agent paused for tool approval.");
+        Console.WriteLine($"Tool: {request.ToolName}");
+        Console.WriteLine($"Risk: {request.RiskLevel}");
+        Console.WriteLine($"Description: {request.Description}");
+        Console.WriteLine($"Arguments: {AgentDebugPreviewBuilder.RedactSensitiveValues(request.ArgumentsJson)}");
+        Console.WriteLine("Use /resume yes to approve or /resume no to reject.");
+        return;
+    }
 
-        if (answer.Equals("no", StringComparison.OrdinalIgnoreCase) ||
-            answer.Equals("n", StringComparison.OrdinalIgnoreCase))
-        {
-            return Task.FromResult(false);
-        }
-
-        Console.WriteLine("Please type yes or no.");
+    if (printCompletedReply)
+    {
+        Console.WriteLine($"{profile.Name}> {result.AssistantReply}");
     }
 }

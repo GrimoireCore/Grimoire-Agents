@@ -86,7 +86,8 @@ public sealed class AgentCheckpointResumerTests
             State: snapshot,
             Messages: CreateCheckpointMessages("""{"note":"hello"}"""),
             SelectedToolNames: ["write_note"],
-            PendingApproval: null);
+            PendingApproval: null,
+            ResolvedTool: null);
 
         AgentSkillRegistry skillRegistry = new([
             new WriteNoteSkill(Path.Combine(Path.GetTempPath(), $"notes-{Guid.NewGuid():N}.md"))

@@ -66,6 +66,39 @@ public sealed class AgentCheckpointStoreTests
     }
 
     [Fact]
+    public async Task SaveAsync_and_LoadAsync_round_trip_tool_resolved_checkpoint()
+    {
+        string tempDirectory = CreateTempDirectory();
+        string checkpointFile = Path.Combine(tempDirectory, "checkpoints", "resolved.json");
+        AgentRunCheckpoint checkpoint = CreateToolResolvedCheckpoint();
+
+        try
+        {
+            await AgentCheckpointStore.SaveAsync(checkpointFile, checkpoint);
+
+            string savedJson = await File.ReadAllTextAsync(checkpointFile);
+            Assert.Contains("\"kind\": \"ToolResolved\"", savedJson);
+            Assert.Contains("\"resolved_tool\": {", savedJson);
+            Assert.Contains("\"observation\": \"Note saved.\"", savedJson);
+
+            AgentRunCheckpoint? loaded = await AgentCheckpointStore.LoadAsync(checkpointFile);
+
+            Assert.NotNull(loaded);
+            Assert.Equal(AgentCheckpointKind.ToolResolved, loaded.Kind);
+            Assert.Null(loaded.PendingApproval);
+            Assert.NotNull(loaded.ResolvedTool);
+            Assert.Equal("call_123", loaded.ResolvedTool.ToolCallId);
+            Assert.Equal("write_note", loaded.ResolvedTool.ToolName);
+            Assert.Equal("Note saved.", loaded.ResolvedTool.Observation);
+            Assert.True(loaded.ResolvedTool.ToolExecuted);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task DeleteAsync_removes_checkpoint_file_and_ignores_missing_file()
     {
         string tempDirectory = CreateTempDirectory();
@@ -124,6 +157,43 @@ public sealed class AgentCheckpointStoreTests
             state: snapshot,
             messages: messages,
             selectedToolNames: ["write_note"]);
+    }
+
+    private static AgentRunCheckpoint CreateToolResolvedCheckpoint()
+    {
+        AgentRunSnapshot snapshot = new(
+            Status: AgentRunStatus.ToolExecuted,
+            ModelRequestCount: 1,
+            ToolCallCount: 1,
+            LastToolName: "write_note",
+            WaitingForApproval: false,
+            LastError: null);
+
+        AgentCheckpointMessage[] messages =
+        [
+            AgentCheckpointMessage.Text("system", "You are a teacher."),
+            AgentCheckpointMessage.Text("user", "please save a note"),
+            AgentCheckpointMessage.AssistantToolCalls(
+            [
+                new AgentCheckpointToolCall(
+                    Id: "call_123",
+                    Name: "write_note",
+                    ArgumentsJson: """{"note":"hello"}""")
+            ])
+        ];
+
+        return AgentRunCheckpoint.CreateToolResolved(
+            runId: "run_abc",
+            createdAt: new DateTimeOffset(2026, 7, 10, 9, 30, 0, TimeSpan.FromHours(8)),
+            state: snapshot,
+            messages: messages,
+            selectedToolNames: ["write_note"],
+            resolvedTool: new ResolvedToolCall(
+                ToolCallId: "call_123",
+                ToolName: "write_note",
+                Approved: true,
+                ToolExecuted: true,
+                Observation: "Note saved."));
     }
 
     private static string CreateTempDirectory()
