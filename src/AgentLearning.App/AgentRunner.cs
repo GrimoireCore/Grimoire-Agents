@@ -572,6 +572,7 @@ public sealed class AgentRunner
                 return pendingApproval;
             }
 
+            AgentToolExecutionContext executionContext = new(runId, toolCall.Id);
             string rawResult;
             bool toolFailed = false;
             try
@@ -581,6 +582,7 @@ public sealed class AgentRunner
                     cancellationToken => _skillRegistry.ExecuteAsync(
                         toolCall.FunctionName,
                         toolCall.FunctionArguments.ToString(),
+                        executionContext,
                         cancellationToken));
             }
             catch (Exception exception) when (AgentToolErrorFormatter.IsRecoverable(exception))

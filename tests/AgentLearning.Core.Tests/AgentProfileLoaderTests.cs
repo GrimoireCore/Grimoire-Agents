@@ -15,6 +15,8 @@ public sealed class AgentProfileLoaderTests
               "name": "Grimoire Tutor",
               "model": "gpt-5.4",
               "base_url": "https://router.hddev.top/v1",
+              "embedding_base_url": "http://127.0.0.1:1234/v1",
+              "embedding_model": "test-embedding-model",
               "env_key": "GRIMOIRE_API_KEY",
               "wire_api": "chat_completions",
               "stream": false,
@@ -42,6 +44,8 @@ public sealed class AgentProfileLoaderTests
             Assert.Equal("Grimoire Tutor", profile.Name);
             Assert.Equal("gpt-5.4", profile.Model);
             Assert.Equal("https://router.hddev.top/v1", profile.BaseUrl);
+            Assert.Equal("http://127.0.0.1:1234/v1", profile.EmbeddingBaseUrl);
+            Assert.Equal("test-embedding-model", profile.EmbeddingModel);
             Assert.Equal("GRIMOIRE_API_KEY", profile.EnvKey);
             Assert.Equal("chat_completions", profile.WireApi);
             Assert.False(profile.Stream);
@@ -79,6 +83,8 @@ public sealed class AgentProfileLoaderTests
               "name": "Grimoire Tutor",
               "model": "gpt-5.4",
               "base_url": "https://router.hddev.top/v1",
+              "embedding_base_url": "http://127.0.0.1:1234/v1",
+              "embedding_model": "test-embedding-model",
               "env_key": "GRIMOIRE_API_KEY",
               "wire_api": "chat_completions",
               "stream": false,
@@ -130,6 +136,8 @@ public sealed class AgentProfileLoaderTests
               "name": "Grimoire Tutor",
               "model": "gpt-5.4",
               "base_url": "https://router.hddev.top/v1",
+              "embedding_base_url": "http://127.0.0.1:1234/v1",
+              "embedding_model": "test-embedding-model",
               "env_key": "GRIMOIRE_API_KEY",
               "wire_api": "chat_completions",
               "stream": false,
@@ -173,6 +181,8 @@ public sealed class AgentProfileLoaderTests
               "name": "Grimoire Tutor",
               "model": "gpt-5.4",
               "base_url": "https://router.hddev.top/v1",
+              "embedding_base_url": "http://127.0.0.1:1234/v1",
+              "embedding_model": "test-embedding-model",
               "env_key": "GRIMOIRE_API_KEY",
               "wire_api": "chat_completions",
               "stream": false,
@@ -216,6 +226,8 @@ public sealed class AgentProfileLoaderTests
               "name": "Grimoire Tutor",
               "model": "gpt-5.4",
               "base_url": "https://router.hddev.top/v1",
+              "embedding_base_url": "http://127.0.0.1:1234/v1",
+              "embedding_model": "test-embedding-model",
               "env_key": "GRIMOIRE_API_KEY",
               "wire_api": "chat_completions",
               "stream": false,
@@ -259,6 +271,8 @@ public sealed class AgentProfileLoaderTests
               "name": "Grimoire Tutor",
               "model": "gpt-5.4",
               "base_url": "https://router.hddev.top/v1",
+              "embedding_base_url": "http://127.0.0.1:1234/v1",
+              "embedding_model": "test-embedding-model",
               "env_key": "GRIMOIRE_API_KEY",
               "wire_api": "chat_completions",
               "stream": false,
@@ -302,6 +316,8 @@ public sealed class AgentProfileLoaderTests
               "name": "Grimoire Tutor",
               "model": "gpt-5.4",
               "base_url": "https://router.hddev.top/v1",
+              "embedding_base_url": "http://127.0.0.1:1234/v1",
+              "embedding_model": "test-embedding-model",
               "env_key": "GRIMOIRE_API_KEY",
               "wire_api": "chat_completions",
               "stream": false,

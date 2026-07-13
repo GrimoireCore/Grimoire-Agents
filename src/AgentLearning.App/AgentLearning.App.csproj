@@ -2,9 +2,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AgentLearning.Core\AgentLearning.Core.csproj" />
+    <ProjectReference Include="..\AgentLearning.McpServer\AgentLearning.McpServer.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
     <PackageReference Include="OpenAI" Version="2.12.0" />
   </ItemGroup>
 
@@ -15,6 +17,10 @@
     <None Update="agent.local.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="knowledge/**/*.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 
   <PropertyGroup>
@@ -23,5 +29,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <Target Name="CopyMcpServerOutput" AfterTargets="Build">
+    <ItemGroup>
+      <McpServerOutput Include="$(MSBuildProjectDirectory)/../AgentLearning.McpServer/bin/$(Configuration)/net8.0/**/*" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(McpServerOutput)"
+      DestinationFiles="@(McpServerOutput->'$(OutDir)mcp-server/%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

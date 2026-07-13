@@ -12,7 +12,9 @@ public sealed class CalculatorSkillTests
     {
         CalculatorSkill skill = new();
 
-        string result = await skill.ExecuteAsync(argumentsJson);
+        string result = await skill.ExecuteAsync(
+            argumentsJson,
+            new AgentToolExecutionContext("run_calculator", "call_calculator"));
 
         Assert.Equal(expected, result);
     }
@@ -23,7 +25,9 @@ public sealed class CalculatorSkillTests
         CalculatorSkill skill = new();
 
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => skill.ExecuteAsync("""{}"""));
+            () => skill.ExecuteAsync(
+                """{}""",
+                new AgentToolExecutionContext("run_calculator", "call_calculator")));
 
         Assert.Equal("Calculator skill requires a non-empty 'expression' argument.", exception.Message);
     }

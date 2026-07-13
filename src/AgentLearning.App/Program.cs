@@ -42,16 +42,61 @@ ChatClient client = new(
 string memoryPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, profile.MemoryFile);
 string notesPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, "memory/agent-notes.md");
 string checkpointPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, "memory/pending-approval-checkpoint.json");
+string knowledgeIndexPath = AgentPathResolver.ResolveRuntimePath(
+    AppContext.BaseDirectory,
+    "memory/knowledge-vector-index.json");
+string knowledgeDirectoryPath = Path.Combine(AppContext.BaseDirectory, "knowledge");
 
 // 现在记忆会从本地 JSON 文件恢复；文件不存在时得到一个空记忆。
 ChatMemory memory = await ChatMemoryStore.LoadAsync(memoryPath);
+
+// The MCP client starts the standalone server as a child process over stdio.
+string mcpServerAssemblyPath = Path.Combine(
+    AppContext.BaseDirectory,
+    "mcp-server",
+    "AgentLearning.McpServer.dll");
+if (!File.Exists(mcpServerAssemblyPath))
+{
+    throw new FileNotFoundException("The bundled MCP server assembly was not found.", mcpServerAssemblyPath);
+}
+
+Dictionary<string, McpToolPolicy> mcpToolPolicies = new(StringComparer.Ordinal)
+{
+    ["get_learning_progress"] = new(
+        RiskLevel: AgentSkillRiskLevel.Low,
+        RequiresConfirmation: false),
+    ["search_knowledge"] = new(
+        RiskLevel: AgentSkillRiskLevel.Low,
+        RequiresConfirmation: false),
+    ["write_note"] = new(
+        RiskLevel: AgentSkillRiskLevel.Medium,
+        RequiresConfirmation: true)
+};
+await using McpSkillClient mcpSkillClient = await McpSkillClient.ConnectStdioAsync(
+    serverName: "agent-learning-tools",
+    command: "dotnet",
+    arguments:
+    [
+        mcpServerAssemblyPath,
+        "--notes-file",
+        notesPath,
+        "--knowledge-directory",
+        knowledgeDirectoryPath,
+        "--knowledge-index-file",
+        knowledgeIndexPath,
+        "--embedding-base-url",
+        profile.EmbeddingBaseUrl,
+        "--embedding-model",
+        profile.EmbeddingModel
+    ],
+    toolPolicies: mcpToolPolicies);
 
 // 注册当前 Agent 可以使用的技能。
 // 这一步只是把 C# 函数准备好，真正什么时候调用由模型决定。
 AgentSkillRegistry skillRegistry = new([
     new TimeSkill(),
     new CalculatorSkill(),
-    new WriteNoteSkill(notesPath)
+    .. mcpSkillClient.Skills
 ]);
 
 AgentRunner agentRunner = new(profile, client, memory, memoryPath, skillRegistry);
@@ -78,6 +123,12 @@ Console.WriteLine($"Show workflow trace: {profile.ShowWorkflowTrace}");
 Console.WriteLine($"Memory file: {memoryPath}");
 Console.WriteLine($"Notes file: {notesPath}");
 Console.WriteLine($"Checkpoint file: {checkpointPath}");
+Console.WriteLine($"Knowledge directory: {knowledgeDirectoryPath}");
+Console.WriteLine($"Knowledge index file: {knowledgeIndexPath}");
+Console.WriteLine($"Embedding base URL: {profile.EmbeddingBaseUrl}");
+Console.WriteLine($"Embedding model: {profile.EmbeddingModel}");
+Console.WriteLine($"MCP server: {mcpServerAssemblyPath}");
+Console.WriteLine($"MCP skills: {string.Join(", ", mcpSkillClient.Skills.Select(skill => skill.Name))}");
 Console.WriteLine($"Loaded memory turns: {memory.Turns.Count}");
 Console.WriteLine($"Max memory turns sent: {profile.MaxMemoryTurns}");
 Console.WriteLine($"Max memory content chars: {profile.MaxMemoryContentChars}");
@@ -164,7 +215,10 @@ static async Task<bool> TryRunLocalSkillCommandAsync(
 {
     if (input.Equals("/time", StringComparison.OrdinalIgnoreCase))
     {
-        string result = await skillRegistry.ExecuteAsync("get_current_time", "{}");
+        string result = await skillRegistry.ExecuteAsync(
+            "get_current_time",
+            "{}",
+            AgentToolExecutionContext.CreateLocalCommand());
         await TrySaveLocalSkillMemoryAsync(profile, memory, memoryPath, input, result);
         Console.WriteLine($"{profile.Name}> {result}");
         return true;
@@ -175,7 +229,10 @@ static async Task<bool> TryRunLocalSkillCommandAsync(
     {
         string expression = input[calculatorPrefix.Length..].Trim();
         string argumentsJson = JsonSerializer.Serialize(new { expression });
-        string result = await skillRegistry.ExecuteAsync("calculate", argumentsJson);
+        string result = await skillRegistry.ExecuteAsync(
+            "calculate",
+            argumentsJson,
+            AgentToolExecutionContext.CreateLocalCommand());
 
         await TrySaveLocalSkillMemoryAsync(profile, memory, memoryPath, input, result);
         Console.WriteLine($"{profile.Name}> {result}");

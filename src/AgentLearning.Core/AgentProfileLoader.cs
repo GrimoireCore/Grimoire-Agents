@@ -92,6 +92,8 @@ public static class AgentProfileLoader
         RequireValue(profile.Name, "name");
         RequireValue(profile.Model, "model");
         RequireValue(profile.BaseUrl, "base_url");
+        RequireValue(profile.EmbeddingBaseUrl, "embedding_base_url");
+        RequireValue(profile.EmbeddingModel, "embedding_model");
         RequireValue(profile.EnvKey, "env_key");
         RequireValue(profile.WireApi, "wire_api");
         RequireValue(profile.MemoryFile, "memory_file");
@@ -101,6 +103,12 @@ public static class AgentProfileLoader
         if (!Uri.TryCreate(profile.BaseUrl, UriKind.Absolute, out _))
         {
             throw new InvalidOperationException("Agent profile field 'base_url' must be an absolute URL.");
+        }
+
+        if (!Uri.TryCreate(profile.EmbeddingBaseUrl, UriKind.Absolute, out _))
+        {
+            throw new InvalidOperationException(
+                "Agent profile field 'embedding_base_url' must be an absolute URL.");
         }
 
         if (profile.MaxMemoryTurns <= 0)

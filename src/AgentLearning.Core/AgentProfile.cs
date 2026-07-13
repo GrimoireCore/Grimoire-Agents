@@ -16,6 +16,14 @@ public sealed record AgentProfile(
     [property: JsonPropertyName("base_url")]
     string BaseUrl,
 
+    /// <summary>The LM Studio OpenAI-compatible base URL used for local embeddings.</summary>
+    [property: JsonPropertyName("embedding_base_url")]
+    string EmbeddingBaseUrl,
+
+    /// <summary>The local LM Studio embedding model identifier.</summary>
+    [property: JsonPropertyName("embedding_model")]
+    string EmbeddingModel,
+
     /// <summary>保存 API Key 的环境变量名，代码不会把密钥写死在文件里。</summary>
     [property: JsonPropertyName("env_key")]
     string EnvKey,

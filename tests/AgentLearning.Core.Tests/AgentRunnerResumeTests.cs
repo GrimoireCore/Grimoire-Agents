@@ -171,6 +171,8 @@ public sealed class AgentRunnerResumeTests
             Name: "Test Agent",
             Model: "test-model",
             BaseUrl: "https://example.test/v1",
+            EmbeddingBaseUrl: "http://127.0.0.1:1234/v1",
+            EmbeddingModel: "test-embedding-model",
             EnvKey: "TEST_API_KEY",
             WireApi: "chat_completions",
             Stream: false,

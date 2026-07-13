@@ -3,11 +3,13 @@ using System.Text.Json;
 namespace AgentLearning.Core.Skills;
 
 /// <summary>
-/// 把一条笔记追加写入本地文件。
-/// 它会修改文件系统，所以虽然示例很小，也必须经过用户确认。
+/// Appends notes to a local Markdown file without duplicating the same logical tool call.
 /// </summary>
 public sealed class WriteNoteSkill : IAgentSkill
 {
+    private const int LockAttemptCount = 100;
+    private static readonly TimeSpan LockRetryDelay = TimeSpan.FromMilliseconds(50);
+
     private readonly string _notesFilePath;
     private readonly Func<DateTimeOffset> _clock;
 
@@ -23,7 +25,9 @@ public sealed class WriteNoteSkill : IAgentSkill
             throw new ArgumentException("Notes file path cannot be empty.", nameof(notesFilePath));
         }
 
-        _notesFilePath = notesFilePath;
+        ArgumentNullException.ThrowIfNull(clock);
+
+        _notesFilePath = Path.GetFullPath(notesFilePath.Trim());
         _clock = clock;
     }
 
@@ -49,23 +53,111 @@ public sealed class WriteNoteSkill : IAgentSkill
 
     public bool RequiresConfirmation => true;
 
-    public async Task<string> ExecuteAsync(string argumentsJson, CancellationToken cancellationToken = default)
+    public async Task<string> ExecuteAsync(
+        string argumentsJson,
+        AgentToolExecutionContext executionContext,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(executionContext);
+
         string note = ReadNote(argumentsJson);
-        string? directory = Path.GetDirectoryName(_notesFilePath);
-        if (!string.IsNullOrWhiteSpace(directory))
+        string directory = Path.GetDirectoryName(_notesFilePath)
+            ?? throw new InvalidOperationException("The notes file must have a parent directory.");
+        Directory.CreateDirectory(directory);
+
+        string operationMarker = BuildOperationMarker(executionContext.IdempotencyKey);
+        string lockFilePath = $"{_notesFilePath}.lock";
+        await using FileStream lockStream = await AcquireFileLockAsync(lockFilePath, cancellationToken);
+        string existingContent = File.Exists(_notesFilePath)
+            ? await File.ReadAllTextAsync(_notesFilePath, cancellationToken)
+            : string.Empty;
+
+        if (existingContent.Contains(operationMarker, StringComparison.Ordinal))
         {
-            Directory.CreateDirectory(directory);
+            return BuildSuccessResult();
         }
 
-        string entry = $"""
+        string entry = BuildEntry(operationMarker, note);
+        string updatedContent = AppendEntry(existingContent, entry);
+        await WriteAtomicallyAsync(updatedContent, cancellationToken);
+
+        return BuildSuccessResult();
+    }
+
+    private string BuildEntry(string operationMarker, string note)
+    {
+        return $"""
+            {operationMarker}
             - {_clock():O}
               {note}
 
             """;
+    }
 
-        await File.AppendAllTextAsync(_notesFilePath, entry, cancellationToken);
+    private string BuildSuccessResult()
+    {
         return $"Note saved to {_notesFilePath}.";
+    }
+
+    private async Task WriteAtomicallyAsync(string content, CancellationToken cancellationToken)
+    {
+        string tempFilePath = $"{_notesFilePath}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(tempFilePath, content, cancellationToken);
+            File.Move(tempFilePath, _notesFilePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
+        }
+    }
+
+    private static async Task<FileStream> AcquireFileLockAsync(
+        string lockFilePath,
+        CancellationToken cancellationToken)
+    {
+        IOException? lastException = null;
+        for (int attempt = 0; attempt < LockAttemptCount; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(
+                    lockFilePath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous);
+            }
+            catch (IOException exception)
+            {
+                lastException = exception;
+            }
+
+            await Task.Delay(LockRetryDelay, cancellationToken);
+        }
+
+        throw new IOException($"Timed out while locking notes file '{lockFilePath}'.", lastException);
+    }
+
+    private static string BuildOperationMarker(string idempotencyKey)
+    {
+        return $"<!-- grimoire-agent-operation:{idempotencyKey} -->";
+    }
+
+    private static string AppendEntry(string existingContent, string entry)
+    {
+        if (existingContent.Length == 0 || existingContent.EndsWith('\n'))
+        {
+            return existingContent + entry;
+        }
+
+        return existingContent + Environment.NewLine + entry;
     }
 
     private static string ReadNote(string argumentsJson)

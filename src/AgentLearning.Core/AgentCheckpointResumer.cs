@@ -53,9 +53,13 @@ public static class AgentCheckpointResumer
                 Observation: rejectedObservation);
         }
 
+        AgentToolExecutionContext executionContext = new(
+            checkpoint.RunId,
+            pendingApproval.ToolCallId);
         string toolResult = await skillRegistry.ExecuteAsync(
             pendingApproval.ToolName,
             pendingApproval.ArgumentsJson,
+            executionContext,
             cancellationToken);
 
         return new AgentCheckpointResumeResult(

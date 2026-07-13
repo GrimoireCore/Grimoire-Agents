@@ -69,6 +69,37 @@ public sealed class AgentCheckpointResumerTests
     }
 
     [Fact]
+    public async Task ResumeAsync_same_pending_checkpoint_twice_writes_note_once()
+    {
+        string tempDirectory = CreateTempDirectory();
+        string notesFile = Path.Combine(tempDirectory, "notes.md");
+        const string note = "A retried checkpoint must not duplicate this note.";
+        AgentRunCheckpoint checkpoint = CreateCheckpoint($"{{\"note\":\"{note}\"}}");
+        AgentSkillRegistry firstProcessRegistry = new([new WriteNoteSkill(notesFile)]);
+        AgentSkillRegistry restartedProcessRegistry = new([new WriteNoteSkill(notesFile)]);
+
+        try
+        {
+            AgentCheckpointResumeResult first = await AgentCheckpointResumer.ResumeAsync(
+                checkpoint,
+                approved: true,
+                firstProcessRegistry);
+            AgentCheckpointResumeResult second = await AgentCheckpointResumer.ResumeAsync(
+                checkpoint,
+                approved: true,
+                restartedProcessRegistry);
+
+            string savedText = await File.ReadAllTextAsync(notesFile);
+            Assert.Equal(first.Observation, second.Observation);
+            Assert.Equal(1, savedText.Split(note, StringSplitOptions.None).Length - 1);
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ResumeAsync_rejects_checkpoint_without_pending_approval()
     {
         AgentRunSnapshot snapshot = new(

@@ -1,29 +1,30 @@
 namespace AgentLearning.Core.Skills;
 
 /// <summary>
-/// Agent 可以调用的一个技能。
-/// 模型只负责“决定要不要调用”，真正执行动作的是这里的 C# 代码。
+/// A skill that the agent can expose to the model and execute locally.
 /// </summary>
 public interface IAgentSkill
 {
-    /// <summary>模型调用工具时使用的函数名。</summary>
+    /// <summary>The function name exposed to the model.</summary>
     string Name { get; }
 
-    /// <summary>给模型看的技能说明，帮助模型判断什么时候该调用它。</summary>
+    /// <summary>The description shown to the model.</summary>
     string Description { get; }
 
-    /// <summary>给模型看的 JSON Schema，描述这个技能需要哪些参数。</summary>
+    /// <summary>The JSON Schema for model-generated arguments.</summary>
     string ParametersJson { get; }
 
-    /// <summary>技能的风险等级，Harness 会用它决定是否需要用户确认。</summary>
+    /// <summary>The risk level used by the harness permission policy.</summary>
     AgentSkillRiskLevel RiskLevel { get; }
 
-    /// <summary>是否无论风险等级如何，都必须先经过用户确认。</summary>
+    /// <summary>Whether this skill always requires human approval.</summary>
     bool RequiresConfirmation { get; }
 
     /// <summary>
-    /// 执行技能。
-    /// argumentsJson 是模型按 ParametersJson 生成的参数 JSON。
+    /// Executes the skill with model arguments and trusted harness metadata.
     /// </summary>
-    Task<string> ExecuteAsync(string argumentsJson, CancellationToken cancellationToken = default);
+    Task<string> ExecuteAsync(
+        string argumentsJson,
+        AgentToolExecutionContext executionContext,
+        CancellationToken cancellationToken = default);
 }

@@ -31,7 +31,10 @@ public sealed class CalculatorSkill : IAgentSkill
 
     public bool RequiresConfirmation => false;
 
-    public Task<string> ExecuteAsync(string argumentsJson, CancellationToken cancellationToken = default)
+    public Task<string> ExecuteAsync(
+        string argumentsJson,
+        AgentToolExecutionContext executionContext,
+        CancellationToken cancellationToken = default)
     {
         string expression = ReadExpression(argumentsJson);
         double result = new ExpressionParser(expression).Parse();

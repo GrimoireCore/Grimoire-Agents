@@ -11,7 +11,10 @@ public sealed class AgentSkillRegistryTests
             new CalculatorSkill()
         ]);
 
-        string result = await registry.ExecuteAsync("calculate", """{"expression":"6 * 7"}""");
+        string result = await registry.ExecuteAsync(
+            "calculate",
+            """{"expression":"6 * 7"}""",
+            new AgentToolExecutionContext("run_registry", "call_calculate"));
 
         Assert.Equal("42", result);
     }
@@ -24,7 +27,10 @@ public sealed class AgentSkillRegistryTests
         ]);
 
         AgentUnknownSkillException exception = await Assert.ThrowsAsync<AgentUnknownSkillException>(
-            () => registry.ExecuteAsync("missing_skill", "{}"));
+            () => registry.ExecuteAsync(
+                "missing_skill",
+                "{}",
+                new AgentToolExecutionContext("run_registry", "call_missing")));
 
         Assert.Equal("Unknown skill: missing_skill", exception.Message);
     }

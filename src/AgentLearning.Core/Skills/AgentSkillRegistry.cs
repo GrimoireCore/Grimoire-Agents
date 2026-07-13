@@ -31,9 +31,12 @@ public sealed class AgentSkillRegistry
     public async Task<string> ExecuteAsync(
         string skillName,
         string argumentsJson,
+        AgentToolExecutionContext executionContext,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(executionContext);
+
         IAgentSkill skill = GetRequiredSkill(skillName);
-        return await skill.ExecuteAsync(argumentsJson, cancellationToken);
+        return await skill.ExecuteAsync(argumentsJson, executionContext, cancellationToken);
     }
 }
