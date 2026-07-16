@@ -24,6 +24,9 @@ VectorKnowledgeIndex knowledgeIndex = await VectorKnowledgeIndex.LoadOrCreateAsy
     knowledgeIndexFilePath,
     embeddingModel,
     embeddingClient);
+KeywordKnowledgeIndex keywordKnowledgeIndex = await KeywordKnowledgeIndex.LoadFromDirectoryAsync(
+    knowledgeDirectoryPath);
+HybridKnowledgeIndex hybridKnowledgeIndex = new(keywordKnowledgeIndex, knowledgeIndex);
 Console.Error.WriteLine(
     $"Knowledge vector index: {(knowledgeIndex.LoadedFromCache ? "loaded from cache" : "rebuilt")}, "
     + $"{knowledgeIndex.ChunkCount} chunks, {knowledgeIndex.EmbeddingDimensions} dimensions.");
@@ -35,7 +38,7 @@ builder.Logging.AddConsole(options =>
 });
 
 builder.Services.AddSingleton(new WriteNoteSkill(notesFilePath));
-builder.Services.AddSingleton(knowledgeIndex);
+builder.Services.AddSingleton(hybridKnowledgeIndex);
 builder.Services
     .AddMcpServer()
     .WithStdioServerTransport()

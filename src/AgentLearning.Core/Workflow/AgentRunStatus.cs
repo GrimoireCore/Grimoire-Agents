@@ -36,6 +36,9 @@ public enum AgentRunStatus
     /// <summary>工具执行失败，但失败信息已经被转换成模型可观察结果。</summary>
     ToolFailed,
 
+    /// <summary>The model answer failed validation and is being repaired.</summary>
+    RepairingAnswer,
+
     /// <summary>一次 Agent 运行已经产出最终回答。</summary>
     Finished,
 

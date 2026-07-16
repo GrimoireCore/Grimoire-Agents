@@ -1,0 +1,27 @@
+[
+  {
+    "id": "harness-risk-control",
+    "question": "Agent 怎样避免模型直接执行有风险的操作？",
+    "expected_source_path": "agent-harness.md"
+  },
+  {
+    "id": "checkpoint-resume",
+    "question": "工具等待确认时需要保存哪些信息才能恢复？",
+    "expected_source_path": "agent-harness.md"
+  },
+  {
+    "id": "mcp-remote-process",
+    "question": "怎样让工具运行在另一台电脑上？",
+    "expected_source_path": "memory-mcp-rag.md"
+  },
+  {
+    "id": "memory-versus-rag",
+    "question": "聊天记忆与外部文档检索有什么区别？",
+    "expected_source_path": "memory-mcp-rag.md"
+  },
+  {
+    "id": "no-answer-expense-policy",
+    "question": "公司的差旅报销金额上限是多少？",
+    "expected_source_path": null
+  }
+]

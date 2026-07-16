@@ -1,0 +1,17 @@
+[
+  {
+    "id": "e2e-harness-risk-control",
+    "question": "Agent Harness 怎样避免模型直接执行高风险工具？",
+    "expected_source_path": "agent-harness.md"
+  },
+  {
+    "id": "e2e-memory-versus-rag",
+    "question": "聊天 Memory 和 RAG 分别解决什么问题？",
+    "expected_source_path": "memory-mcp-rag.md"
+  },
+  {
+    "id": "e2e-no-answer-expense-policy",
+    "question": "公司的差旅报销金额上限是多少？",
+    "expected_source_path": null
+  }
+]

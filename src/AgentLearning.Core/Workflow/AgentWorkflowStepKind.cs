@@ -15,5 +15,6 @@ public enum AgentWorkflowStepKind
     ToolRejected,
     ToolFailed,
     ToolExecuted,
+    AnswerRejected,
     Finish
 }

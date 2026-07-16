@@ -1,0 +1,14 @@
+{
+  "format_version": 1,
+  "minimum_case_count": 3,
+  "required_case_ids": [
+    "e2e-harness-risk-control",
+    "e2e-memory-versus-rag",
+    "e2e-no-answer-expense-policy"
+  ],
+  "minimum_retrieval_accuracy": 1.0,
+  "minimum_citation_accuracy": 1.0,
+  "minimum_groundedness_rate": 1.0,
+  "minimum_pass_rate": 1.0,
+  "maximum_citation_repair_rate": 0.0
+}

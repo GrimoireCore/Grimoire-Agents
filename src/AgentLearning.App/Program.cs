@@ -46,6 +46,25 @@ string knowledgeIndexPath = AgentPathResolver.ResolveRuntimePath(
     AppContext.BaseDirectory,
     "memory/knowledge-vector-index.json");
 string knowledgeDirectoryPath = Path.Combine(AppContext.BaseDirectory, "knowledge");
+string ragEvaluationPath = Path.Combine(
+    AppContext.BaseDirectory,
+    "evaluation",
+    "rag-evaluation.json");
+string groundednessEvaluationPath = Path.Combine(
+    AppContext.BaseDirectory,
+    "evaluation",
+    "groundedness-evaluation.json");
+string endToEndRagEvaluationPath = Path.Combine(
+    AppContext.BaseDirectory,
+    "evaluation",
+    "e2e-rag-evaluation.json");
+string endToEndRagBaselinePath = Path.Combine(
+    AppContext.BaseDirectory,
+    "evaluation",
+    "e2e-rag-baseline.json");
+string endToEndRagArtifactPath = AgentPathResolver.ResolveRuntimePath(
+    AppContext.BaseDirectory,
+    "memory/evaluation/e2e-rag-latest.json");
 
 // 现在记忆会从本地 JSON 文件恢复；文件不存在时得到一个空记忆。
 ChatMemory memory = await ChatMemoryStore.LoadAsync(memoryPath);
@@ -99,7 +118,15 @@ AgentSkillRegistry skillRegistry = new([
     .. mcpSkillClient.Skills
 ]);
 
-AgentRunner agentRunner = new(profile, client, memory, memoryPath, skillRegistry);
+IAgentChatClient evaluationClient = new OpenAIChatClientAdapter(client);
+AgentRunner agentRunner = new(profile, evaluationClient, memory, memoryPath, skillRegistry);
+EndToEndRagRegressionRunner endToEndRagRegressionRunner = new(
+    new EndToEndRagEvaluator(skillRegistry, evaluationClient),
+    endToEndRagEvaluationPath,
+    endToEndRagBaselinePath,
+    endToEndRagArtifactPath,
+    profile.Model,
+    profile.EmbeddingModel);
 agentRunner.CheckpointCreatedAsync = checkpoint => SaveCheckpointAsync(checkpointPath, checkpoint, profile);
 agentRunner.CheckpointConsumedAsync = _ => AgentCheckpointStore.DeleteAsync(checkpointPath);
 agentRunner.WorkflowStepCreated += step =>
@@ -125,6 +152,11 @@ Console.WriteLine($"Notes file: {notesPath}");
 Console.WriteLine($"Checkpoint file: {checkpointPath}");
 Console.WriteLine($"Knowledge directory: {knowledgeDirectoryPath}");
 Console.WriteLine($"Knowledge index file: {knowledgeIndexPath}");
+Console.WriteLine($"RAG evaluation file: {ragEvaluationPath}");
+Console.WriteLine($"Groundedness evaluation file: {groundednessEvaluationPath}");
+Console.WriteLine($"End-to-end RAG evaluation file: {endToEndRagEvaluationPath}");
+Console.WriteLine($"End-to-end RAG baseline file: {endToEndRagBaselinePath}");
+Console.WriteLine($"End-to-end RAG latest artifact: {endToEndRagArtifactPath}");
 Console.WriteLine($"Embedding base URL: {profile.EmbeddingBaseUrl}");
 Console.WriteLine($"Embedding model: {profile.EmbeddingModel}");
 Console.WriteLine($"MCP server: {mcpServerAssemblyPath}");
@@ -137,13 +169,35 @@ Console.WriteLine($"Max tool result chars: {profile.MaxToolResultChars}");
 Console.WriteLine($"Tool timeout seconds: {profile.ToolTimeoutSeconds}");
 Console.WriteLine($"Skills: {string.Join(", ", skillRegistry.Skills.Select(skill => skill.Name))}");
 Console.WriteLine("Type a message and press Enter. Type 'exit' to quit.");
-Console.WriteLine("Local skill commands: /time, /calc <expression>");
+Console.WriteLine("Local commands: /time, /calc <expression>, /eval-rag, /eval-grounding, /eval-rag-e2e");
 Console.WriteLine();
 
 if (profile.Stream && profile.NativeToolCalling)
 {
     Console.WriteLine("Native tool calling is only implemented for non-streaming mode in this lesson.");
     return 1;
+}
+
+if (args.Length > 0)
+{
+    if (args.Length != 1
+        || !args[0].Equals("--eval-rag-e2e", StringComparison.OrdinalIgnoreCase))
+    {
+        Console.WriteLine("Unsupported arguments. Use --eval-rag-e2e for the CI regression gate.");
+        return 1;
+    }
+
+    try
+    {
+        EndToEndRagRegressionRunResult regressionResult = await endToEndRagRegressionRunner.RunAsync();
+        PrintEndToEndRagRegressionRunResult(regressionResult);
+        return regressionResult.Gate.Passed ? 0 : 2;
+    }
+    catch (Exception exception)
+    {
+        Console.WriteLine($"End-to-end RAG regression gate failed to run: {exception.Message}");
+        return 1;
+    }
 }
 
 while (true)
@@ -169,7 +223,16 @@ while (true)
         continue;
     }
 
-    if (await TryRunLocalSkillCommandAsync(input, profile, memory, memoryPath, skillRegistry))
+    if (await TryRunLocalSkillCommandAsync(
+            input,
+            profile,
+            memory,
+            memoryPath,
+            ragEvaluationPath,
+            groundednessEvaluationPath,
+            skillRegistry,
+            evaluationClient,
+            endToEndRagRegressionRunner))
     {
         Console.WriteLine();
         continue;
@@ -211,7 +274,11 @@ static async Task<bool> TryRunLocalSkillCommandAsync(
     AgentProfile profile,
     ChatMemory memory,
     string memoryPath,
-    AgentSkillRegistry skillRegistry)
+    string ragEvaluationPath,
+    string groundednessEvaluationPath,
+    AgentSkillRegistry skillRegistry,
+    IAgentChatClient evaluationClient,
+    EndToEndRagRegressionRunner endToEndRagRegressionRunner)
 {
     if (input.Equals("/time", StringComparison.OrdinalIgnoreCase))
     {
@@ -239,7 +306,170 @@ static async Task<bool> TryRunLocalSkillCommandAsync(
         return true;
     }
 
+    if (input.Equals("/eval-rag", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            KnowledgeRetrievalEvaluator evaluator = new(skillRegistry);
+            KnowledgeRetrievalEvaluationReport report = await evaluator.EvaluateAsync(ragEvaluationPath);
+            PrintKnowledgeRetrievalEvaluationReport(report);
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"RAG evaluation failed: {exception.Message}");
+        }
+
+        return true;
+    }
+
+    if (input.Equals("/eval-grounding", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            GroundednessEvaluator evaluator = new(evaluationClient);
+            GroundednessEvaluationReport report = await evaluator.EvaluateAsync(
+                groundednessEvaluationPath);
+            PrintGroundednessEvaluationReport(report);
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"Groundedness evaluation failed: {exception.Message}");
+        }
+
+        return true;
+    }
+
+    if (input.Equals("/eval-rag-e2e", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            EndToEndRagRegressionRunResult regressionResult = await endToEndRagRegressionRunner.RunAsync();
+            PrintEndToEndRagRegressionRunResult(regressionResult);
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"End-to-end RAG evaluation failed: {exception.Message}");
+        }
+
+        return true;
+    }
+
     return false;
+}
+
+static void PrintEndToEndRagRegressionRunResult(EndToEndRagRegressionRunResult result)
+{
+    PrintEndToEndRagEvaluationReport(result.Report);
+    Console.WriteLine($"Latest artifact: {result.ArtifactFilePath}");
+    Console.WriteLine($"Regression gate: {(result.Gate.Passed ? "PASS" : "FAIL")}");
+    foreach (string failure in result.Gate.Failures)
+    {
+        Console.WriteLine($"  - {failure}");
+    }
+}
+
+static void PrintEndToEndRagEvaluationReport(EndToEndRagEvaluationReport report)
+{
+    foreach (EndToEndRagEvaluationResult result in report.Results)
+    {
+        string status = result.Passed ? "PASS" : "FAIL";
+        string retrieved = result.RetrievedMatches.Count == 0
+            ? "<none>"
+            : string.Join(
+                ", ",
+                result.RetrievedMatches.Select(match =>
+                    $"{match.SourcePath}#chunk-{match.ChunkNumber}"));
+        Console.WriteLine($"[RAG E2E] {status} {result.Case.Id}");
+        Console.WriteLine($"  retrieved: {retrieved}");
+        Console.WriteLine($"  retrieval correct: {result.RetrievalCorrect}");
+        Console.WriteLine($"  citation correct: {result.CitationCorrect}");
+        Console.WriteLine($"  citation repair attempted: {result.CitationRepairAttempted}");
+        Console.WriteLine($"  grounded: {result.Grounded}");
+        Console.WriteLine(FormattableString.Invariant(
+            $"  groundedness score: {result.GroundednessJudgment.Score:F2}"));
+        Console.WriteLine($"  answer: {result.Answer.Replace(Environment.NewLine, " ")}");
+        if (!result.CitationCorrect)
+        {
+            Console.WriteLine($"  citation error: {result.CitationValidation.Error}");
+        }
+
+        if (result.GroundednessJudgment.UnsupportedClaims.Count > 0)
+        {
+            Console.WriteLine(
+                $"  unsupported: {string.Join(" | ", result.GroundednessJudgment.UnsupportedClaims)}");
+        }
+    }
+
+    Console.WriteLine(
+        $"Retrieval: {report.RetrievalCorrectCount}/{report.TotalCount} ({report.RetrievalAccuracy:P0})");
+    Console.WriteLine(
+        $"Citations: {report.CitationCorrectCount}/{report.TotalCount} ({report.CitationAccuracy:P0})");
+    Console.WriteLine(
+        $"Groundedness: {report.GroundedCount}/{report.TotalCount} ({report.GroundednessRate:P0})");
+    Console.WriteLine(
+        $"Citation repairs: {report.CitationRepairCount}/{report.TotalCount} ({report.CitationRepairRate:P0})");
+    Console.WriteLine(
+        $"End-to-end: {report.PassedCount}/{report.TotalCount} ({report.PassRate:P0})");
+}
+
+static void PrintGroundednessEvaluationReport(GroundednessEvaluationReport report)
+{
+    foreach (GroundednessEvaluationResult result in report.Results)
+    {
+        string status = result.IsCorrect ? "PASS" : "FAIL";
+        Console.WriteLine($"[Groundedness Eval] {status} {result.Case.Id}");
+        Console.WriteLine($"  expected grounded: {result.Case.ExpectedGrounded}");
+        Console.WriteLine($"  judged grounded: {result.Judgment.Grounded}");
+        Console.WriteLine(FormattableString.Invariant(
+            $"  score: {result.Judgment.Score:F2}"));
+        Console.WriteLine($"  reason: {result.Judgment.Reason}");
+        if (result.Judgment.UnsupportedClaims.Count > 0)
+        {
+            Console.WriteLine(
+                $"  unsupported: {string.Join(" | ", result.Judgment.UnsupportedClaims)}");
+        }
+    }
+
+    Console.WriteLine(
+        $"Accuracy: {report.CorrectCount}/{report.TotalCount} ({report.Accuracy:P0})");
+    Console.WriteLine(
+        $"Grounded acceptance: {report.AcceptedGroundedCount}/{report.GroundedCaseCount} ({report.GroundedAcceptanceRate:P0})");
+    Console.WriteLine(
+        $"Unsupported rejection: {report.RejectedUnsupportedCount}/{report.UnsupportedCaseCount} ({report.UnsupportedRejectionRate:P0})");
+}
+
+static void PrintKnowledgeRetrievalEvaluationReport(KnowledgeRetrievalEvaluationReport report)
+{
+    foreach (KnowledgeRetrievalEvaluationResult result in report.Results)
+    {
+        string expected = result.ExpectsNoAnswer
+            ? "<no answer>"
+            : result.Case.ExpectedSourcePath!;
+        string status = result.ExpectsNoAnswer
+            ? result.NoAnswerCorrect ? "PASS" : "FAIL"
+            : result.RecallAt3Correct ? "PASS" : "FAIL";
+        Console.WriteLine($"[RAG Eval] {status} {result.Case.Id}");
+        Console.WriteLine($"  expected: {expected}");
+        if (result.RetrievedMatches.Count == 0)
+        {
+            Console.WriteLine("  retrieved: <none>");
+            continue;
+        }
+
+        Console.WriteLine("  retrieved:");
+        foreach (KnowledgeRetrievalMatch match in result.RetrievedMatches)
+        {
+            Console.WriteLine(FormattableString.Invariant(
+                $"    {match.Rank}. {match.SourcePath} (chunk {match.ChunkNumber}): combined={match.CombinedScore:F3}, vector={match.VectorScore:F3}, keyword={match.KeywordScore:F3}"));
+        }
+    }
+
+    Console.WriteLine(
+        $"Top 1: {report.Top1CorrectCount}/{report.AnswerCaseCount} ({report.Top1Accuracy:P0})");
+    Console.WriteLine(
+        $"Recall@3: {report.RecallAt3CorrectCount}/{report.AnswerCaseCount} ({report.RecallAt3:P0})");
+    Console.WriteLine(
+        $"No answer: {report.NoAnswerCorrectCount}/{report.NoAnswerCaseCount} ({report.NoAnswerAccuracy:P0})");
 }
 
 static async Task<bool> TryResumeCheckpointCommandAsync(

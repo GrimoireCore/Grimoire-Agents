@@ -13,6 +13,8 @@ namespace AgentLearning.App;
 /// </summary>
 public sealed class AgentRunner
 {
+    private const int MaximumCitationRepairAttempts = 1;
+
     private readonly AgentProfile _profile;
     private readonly IAgentChatClient _client;
     private readonly ChatMemory _memory;
@@ -300,6 +302,8 @@ public sealed class AgentRunner
         AgentToolIterationGuard toolIterationGuard = new(_profile.MaxToolIterations);
         AgentToolResultLimiter toolResultLimiter = new(_profile.MaxToolResultChars);
         AgentToolTimeoutRunner toolTimeoutRunner = new(_profile.ToolTimeoutSeconds);
+        KnowledgeCitationValidator citationValidator = new();
+        int citationRepairCount = 0;
         int requestNumber = 1;
         while (true)
         {
@@ -339,7 +343,8 @@ public sealed class AgentRunner
                     workflowTrace,
                     runState,
                     toolResultLimiter,
-                    toolTimeoutRunner);
+                    toolTimeoutRunner,
+                    citationValidator);
 
                 if (pendingApproval is not null)
                 {
@@ -353,7 +358,34 @@ public sealed class AgentRunner
             switch (completion.FinishReason)
             {
                 case ChatFinishReason.Stop:
-                    return AgentLoopResult.Completed(ReadTextContent(completion));
+                    string answer = ReadTextContent(completion);
+                    KnowledgeCitationValidationResult validation = citationValidator.Validate(answer);
+                    if (validation.IsValid)
+                    {
+                        return AgentLoopResult.Completed(answer);
+                    }
+
+                    if (citationRepairCount >= MaximumCitationRepairAttempts)
+                    {
+                        throw new InvalidOperationException(
+                            $"Model answer failed citation validation after {MaximumCitationRepairAttempts} repair attempt(s): {validation.Error}");
+                    }
+
+                    citationRepairCount++;
+                    AddWorkflowStep(
+                        workflowTrace,
+                        runState,
+                        AgentWorkflowStepKind.AnswerRejected,
+                        "Repair citations",
+                        validation.Error ?? "Citation validation failed.");
+                    AddCitationRepairMessages(
+                        messages,
+                        debugMessages,
+                        completion,
+                        answer,
+                        citationValidator.BuildRepairInstruction(validation));
+                    requestNumber++;
+                    continue;
 
                 case ChatFinishReason.ToolCalls:
                     throw new InvalidOperationException(
@@ -532,7 +564,8 @@ public sealed class AgentRunner
         AgentWorkflowTrace workflowTrace,
         AgentRunState runState,
         AgentToolResultLimiter toolResultLimiter,
-        AgentToolTimeoutRunner toolTimeoutRunner)
+        AgentToolTimeoutRunner toolTimeoutRunner,
+        KnowledgeCitationValidator citationValidator)
     {
         // 先把“模型要求调用工具”这条 assistant 消息加入上下文。
         // SDK 会保留 tool_call_id，下一条 ToolChatMessage 才能和它对上。
@@ -602,7 +635,18 @@ public sealed class AgentRunner
                     error: exception.Message);
             }
 
-            string result = toolResultLimiter.Limit(rawResult);
+            if (!toolFailed
+                && toolCall.FunctionName.Equals(
+                    KnowledgeGroundingPolicy.SearchToolName,
+                    StringComparison.Ordinal))
+            {
+                citationValidator.RecordSearchResult(rawResult);
+            }
+
+            string preparedResult = toolFailed
+                ? rawResult
+                : KnowledgeGroundingPolicy.PrepareToolResult(toolCall.FunctionName, rawResult);
+            string result = toolResultLimiter.Limit(preparedResult);
 
             if (!toolFailed)
             {
@@ -628,6 +672,27 @@ public sealed class AgentRunner
         }
 
         return null;
+    }
+
+    private static void AddCitationRepairMessages(
+        ICollection<ChatMessage> messages,
+        ICollection<AgentDebugMessage> debugMessages,
+        ChatCompletion rejectedCompletion,
+        string rejectedAnswer,
+        string repairInstruction)
+    {
+        messages.Add(new AssistantChatMessage(rejectedCompletion));
+        messages.Add(new UserChatMessage(repairInstruction));
+        debugMessages.Add(new AgentDebugMessage
+        {
+            Role = "assistant",
+            Content = rejectedAnswer
+        });
+        debugMessages.Add(new AgentDebugMessage
+        {
+            Role = "user",
+            Content = repairInstruction
+        });
     }
 
     private async Task<AgentToolConfirmationRequest?> PauseForToolApprovalIfNeededAsync(
@@ -932,6 +997,10 @@ public sealed class AgentRunner
                 runState.MarkToolExecuted(RequireToolName(toolName, kind));
                 break;
 
+            case AgentWorkflowStepKind.AnswerRejected:
+                runState.MarkRepairingAnswer();
+                break;
+
             case AgentWorkflowStepKind.Finish:
                 runState.MarkFinished();
                 break;
@@ -1085,6 +1154,11 @@ public sealed class AgentRunner
 
         Instructions:
         {_profile.Instructions}
+
+        Knowledge retrieval rules:
+        - Use search_knowledge when the user asks about information that may be stored in the learning knowledge base.
+        - When search_knowledge returns reference data, follow the grounding and citation requirements in the tool result.
+        - When search_knowledge reports no relevant result, only say that the knowledge base does not contain the answer; do not guess or add outside recommendations.
         """;
     }
 

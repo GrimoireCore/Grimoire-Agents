@@ -1,0 +1,30 @@
+[
+  {
+    "id": "memory-versus-rag-grounded",
+    "question": "聊天 Memory 和 RAG 有什么区别？",
+    "reference": "Memory 用于保留对话历史，让 Agent 知道之前聊过什么。RAG 用于从外部文档中检索相关内容，再把检索结果和用户问题一起交给模型。",
+    "answer": "Memory 保存对话上下文，RAG 从外部文档中查找与当前问题相关的知识。",
+    "expected_grounded": true
+  },
+  {
+    "id": "memory-unlimited-history-unsupported",
+    "question": "聊天记录很多时，Memory 会怎样处理？",
+    "reference": "聊天记录太多时，程序会按照窗口大小和字符限制筛选最近的对话。",
+    "answer": "Memory 会永久把全部历史消息发送给模型，从不截断任何内容。",
+    "expected_grounded": false
+  },
+  {
+    "id": "harness-approval-grounded",
+    "question": "Harness 怎样控制高风险工具？",
+    "reference": "模型可以提出工具调用建议，但 Harness 决定是否允许执行。工具需要确认时，Harness 保存消息、工具参数、runId 和 toolCallId，然后暂停；用户输入 yes 后恢复执行，输入 no 时返回拒绝结果。",
+    "answer": "模型只能提出调用建议。高风险工具由 Harness 暂停并等待人工确认，用户同意后才恢复执行。",
+    "expected_grounded": true
+  },
+  {
+    "id": "mcp-remote-http-unsupported",
+    "question": "当前 MCP Server 运行在哪里？",
+    "reference": "当前项目使用 stdio 启动本机 MCP 子进程。将来可以改为 HTTP，让 MCP Server 运行在另一台电脑上。",
+    "answer": "当前 MCP Server 已经通过 HTTP 运行在另一台电脑上。",
+    "expected_grounded": false
+  }
+]

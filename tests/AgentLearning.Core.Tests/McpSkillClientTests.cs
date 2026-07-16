@@ -70,8 +70,8 @@ public sealed class McpSkillClientTests
             new AgentToolExecutionContext("run_mcp_test", "call_mcp_test"),
             timeout.Token);
 
-        Assert.Contains("向量索引持久化", progressResult);
-        Assert.Contains("实现混合检索", progressResult);
+        Assert.Contains("Top 1、Recall@3", progressResult);
+        Assert.Contains("调整阈值", progressResult);
 
         IAgentSkill searchKnowledgeSkill = Assert.Single(
             client.Skills.Where(skill => skill.Name == "search_knowledge"));
@@ -86,6 +86,7 @@ public sealed class McpSkillClientTests
             timeout.Token);
 
         Assert.Contains("Source: refund-policy.md", searchResult);
+        Assert.Contains("Scores: combined=", searchResult);
         Assert.Contains("人工审核退款请求", searchResult);
 
         IAgentSkill writeNoteSkill = Assert.Single(

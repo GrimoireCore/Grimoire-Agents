@@ -88,6 +88,12 @@ public sealed class AgentRunState
         MoveTo(AgentRunStatus.ToolFailed);
     }
 
+    /// <summary>Marks that the latest model answer was rejected and needs one repair attempt.</summary>
+    public void MarkRepairingAnswer()
+    {
+        MoveTo(AgentRunStatus.RepairingAnswer);
+    }
+
     /// <summary>标记一次运行已经完成。</summary>
     public void MarkFinished()
     {
