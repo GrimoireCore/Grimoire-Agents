@@ -7,6 +7,7 @@ namespace AgentLearning.App;
 /// The externally visible result of one agent run.
 /// </summary>
 public sealed record AgentRunResult(
+    string RunId,
     AgentRunOutcome Outcome,
     string? AssistantReply,
     AgentToolConfirmationRequest? PendingApproval,

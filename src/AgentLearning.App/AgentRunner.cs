@@ -3,6 +3,7 @@ using AgentLearning.Core.Diagnostics;
 using AgentLearning.Core.Skills;
 using AgentLearning.Core.Workflow;
 using OpenAI.Chat;
+using System.Diagnostics;
 using System.Text;
 
 namespace AgentLearning.App;
@@ -60,6 +61,9 @@ public sealed class AgentRunner
     /// <summary>Raised when a checkpoint is fully completed and can be removed.</summary>
     public Func<AgentRunCheckpoint, Task>? CheckpointConsumedAsync { get; set; }
 
+    /// <summary>Raised once when a run or resume segment completes, pauses, or fails.</summary>
+    public Func<AgentExecutionTrace, Task>? ExecutionTraceCompletedAsync { get; set; }
+
     /// <summary>
     /// 运行一轮 Agent。
     /// 这里是 Harness 的核心：模型可以决定调用工具，但循环边界和记忆保存由代码控制。
@@ -74,6 +78,40 @@ public sealed class AgentRunner
         AgentWorkflowTrace workflowTrace = new();
         AgentRunState runState = new();
         string runId = $"run_{Guid.NewGuid():N}";
+        AgentExecutionTraceBuilder executionTrace = new(
+            runId,
+            operation: "run",
+            _profile.Model,
+            userInputLength: userInput.Length);
+
+        AgentRunResult result;
+        try
+        {
+            result = await RunCoreAsync(
+                runId,
+                userInput,
+                workflowTrace,
+                runState,
+                executionTrace);
+        }
+        catch (Exception exception)
+        {
+            runState.MarkFailed(exception.Message);
+            await PublishFailedExecutionTraceAsync(executionTrace, workflowTrace, runState, exception);
+            throw;
+        }
+
+        await PublishExecutionTraceAsync(executionTrace, result.Outcome, workflowTrace, runState);
+        return result;
+    }
+
+    private async Task<AgentRunResult> RunCoreAsync(
+        string runId,
+        string userInput,
+        AgentWorkflowTrace workflowTrace,
+        AgentRunState runState,
+        AgentExecutionTraceBuilder executionTrace)
+    {
 
         AgentMemoryWritePolicy memoryWritePolicy = new(_profile.MaxMemoryContentChars);
         bool shouldSaveUserInput = memoryWritePolicy.ShouldWrite(userInput);
@@ -100,12 +138,20 @@ public sealed class AgentRunner
         AddCurrentUserInput(messages, debugMessages, userInput);
 
         AgentLoopResult loopResult = _profile.Stream
-            ? AgentLoopResult.Completed(await CompleteStreamingAsync(messages))
-            : await CompleteOnceAsync(runId, userInput, messages, debugMessages, workflowTrace, runState);
+            ? AgentLoopResult.Completed(await CompleteStreamingAsync(messages, executionTrace))
+            : await CompleteOnceAsync(
+                runId,
+                userInput,
+                messages,
+                debugMessages,
+                workflowTrace,
+                runState,
+                executionTrace);
 
         if (loopResult.PendingApproval is not null)
         {
             return new AgentRunResult(
+                runId,
                 AgentRunOutcome.WaitingForApproval,
                 AssistantReply: null,
                 loopResult.PendingApproval,
@@ -137,6 +183,7 @@ public sealed class AgentRunner
         }
 
         return new AgentRunResult(
+            runId,
             AgentRunOutcome.Completed,
             assistantReply,
             PendingApproval: null,
@@ -159,11 +206,65 @@ public sealed class AgentRunner
 
         AgentWorkflowTrace workflowTrace = new();
         AgentRunState runState = new();
+        AgentExecutionTraceBuilder executionTrace = new(
+            checkpoint.RunId,
+            operation: "resume",
+            _profile.Model,
+            approvalDecision: approved);
 
-        AgentCheckpointResumeResult resumeResult = await AgentCheckpointResumer.ResumeAsync(
-            checkpoint,
-            approved,
-            _skillRegistry);
+        AgentRunResult result;
+        try
+        {
+            result = await ResumeCoreAsync(
+                checkpoint,
+                approved,
+                workflowTrace,
+                runState,
+                executionTrace);
+        }
+        catch (Exception exception)
+        {
+            runState.MarkFailed(exception.Message);
+            await PublishFailedExecutionTraceAsync(executionTrace, workflowTrace, runState, exception);
+            throw;
+        }
+
+        await PublishExecutionTraceAsync(executionTrace, result.Outcome, workflowTrace, runState);
+        return result;
+    }
+
+    private async Task<AgentRunResult> ResumeCoreAsync(
+        AgentRunCheckpoint checkpoint,
+        bool approved,
+        AgentWorkflowTrace workflowTrace,
+        AgentRunState runState,
+        AgentExecutionTraceBuilder executionTrace)
+    {
+
+        Stopwatch resumeToolStopwatch = Stopwatch.StartNew();
+        AgentCheckpointResumeResult resumeResult;
+        try
+        {
+            resumeResult = await AgentCheckpointResumer.ResumeAsync(
+                checkpoint,
+                approved,
+                _skillRegistry);
+            if (checkpoint.Kind == AgentCheckpointKind.PendingToolApproval
+                && resumeResult.ToolExecuted)
+            {
+                executionTrace.RecordToolCall(
+                    resumeResult.ToolName,
+                    resumeToolStopwatch.Elapsed);
+            }
+        }
+        catch (Exception exception)
+        {
+            string toolName = checkpoint.PendingApproval?.ToolName
+                ?? checkpoint.ResolvedTool?.ToolName
+                ?? "unknown";
+            executionTrace.RecordToolCall(toolName, resumeToolStopwatch.Elapsed, exception);
+            throw;
+        }
 
         AddWorkflowStep(
             workflowTrace,
@@ -208,11 +309,13 @@ public sealed class AgentRunner
             selectedSkills,
             options,
             workflowTrace,
-            runState);
+            runState,
+            executionTrace);
 
         if (loopResult.PendingApproval is not null)
         {
             return new AgentRunResult(
+                checkpoint.RunId,
                 AgentRunOutcome.WaitingForApproval,
                 AssistantReply: null,
                 loopResult.PendingApproval,
@@ -238,6 +341,7 @@ public sealed class AgentRunner
         }
 
         return new AgentRunResult(
+            checkpoint.RunId,
             AgentRunOutcome.Completed,
             assistantReply,
             PendingApproval: null,
@@ -271,11 +375,16 @@ public sealed class AgentRunner
         List<ChatMessage> messages,
         List<AgentDebugMessage> debugMessages,
         AgentWorkflowTrace workflowTrace,
-        AgentRunState runState)
+        AgentRunState runState,
+        AgentExecutionTraceBuilder executionTrace)
     {
         // native_tool_calling 打开时，先让 AI Tool Router 从轻量目录里选工具。
         // 主 Agent 只会收到被选中的工具完整 Schema。
-        IReadOnlyList<IAgentSkill> selectedSkills = await SelectSkillsForCurrentTurnAsync(userInput, workflowTrace, runState);
+        IReadOnlyList<IAgentSkill> selectedSkills = await SelectSkillsForCurrentTurnAsync(
+            userInput,
+            workflowTrace,
+            runState,
+            executionTrace);
         ChatCompletionOptions? options = selectedSkills.Count > 0
             ? BuildChatOptions(selectedSkills)
             : null;
@@ -287,7 +396,8 @@ public sealed class AgentRunner
             selectedSkills,
             options,
             workflowTrace,
-            runState);
+            runState,
+            executionTrace);
     }
 
     private async Task<AgentLoopResult> CompleteToolLoopAsync(
@@ -297,7 +407,8 @@ public sealed class AgentRunner
         IReadOnlyList<IAgentSkill> selectedSkills,
         ChatCompletionOptions? options,
         AgentWorkflowTrace workflowTrace,
-        AgentRunState runState)
+        AgentRunState runState,
+        AgentExecutionTraceBuilder executionTrace)
     {
         AgentToolIterationGuard toolIterationGuard = new(_profile.MaxToolIterations);
         AgentToolResultLimiter toolResultLimiter = new(_profile.MaxToolResultChars);
@@ -315,7 +426,11 @@ public sealed class AgentRunner
                 $"Request #{requestNumber} sent to the model.");
 
             EmitChatRequestPreview(debugMessages, requestNumber, selectedSkills);
-            ChatCompletion completion = await _client.CompleteChatAsync(messages, options);
+            ChatCompletion completion = await CompleteChatWithTraceAsync(
+                "main_agent",
+                messages,
+                options,
+                executionTrace);
             EmitChatResponsePreview(completion);
 
             // 有些 OpenAI-compatible Router 会返回 tool_calls，但 finish_reason 仍然是 stop。
@@ -344,7 +459,8 @@ public sealed class AgentRunner
                     runState,
                     toolResultLimiter,
                     toolTimeoutRunner,
-                    citationValidator);
+                    citationValidator,
+                    executionTrace);
 
                 if (pendingApproval is not null)
                 {
@@ -411,10 +527,35 @@ public sealed class AgentRunner
         return string.Concat(completion.Content.Select(part => part.Text));
     }
 
+    private async Task<ChatCompletion> CompleteChatWithTraceAsync(
+        string stage,
+        IReadOnlyList<ChatMessage> messages,
+        ChatCompletionOptions? options,
+        AgentExecutionTraceBuilder executionTrace)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        try
+        {
+            ChatCompletion completion = await _client.CompleteChatAsync(messages, options);
+            executionTrace.RecordModelCall(stage, stopwatch.Elapsed, completion);
+            return completion;
+        }
+        catch (Exception exception)
+        {
+            executionTrace.RecordModelCall(
+                stage,
+                stopwatch.Elapsed,
+                completion: null,
+                exception);
+            throw;
+        }
+    }
+
     private async Task<IReadOnlyList<IAgentSkill>> SelectSkillsForCurrentTurnAsync(
         string userInput,
         AgentWorkflowTrace workflowTrace,
-        AgentRunState runState)
+        AgentRunState runState,
+        AgentExecutionTraceBuilder executionTrace)
     {
         if (!_profile.NativeToolCalling || _skillRegistry.Skills.Count == 0)
         {
@@ -444,7 +585,11 @@ public sealed class AgentRunner
         List<ChatMessage> routerMessages = BuildToolRouterMessages(userInput, catalogJson);
         EmitToolRouterRequestPreview(userInput, catalogJson);
 
-        ChatCompletion completion = await _client.CompleteChatAsync(routerMessages);
+        ChatCompletion completion = await CompleteChatWithTraceAsync(
+            "tool_router",
+            routerMessages,
+            options: null,
+            executionTrace);
         string routerJson = ReadRouterTextContent(completion);
         EmitToolRouterResponsePreview(completion, routerJson);
 
@@ -538,18 +683,37 @@ public sealed class AgentRunner
             .ToArray();
     }
 
-    private async Task<string> CompleteStreamingAsync(List<ChatMessage> messages)
+    private async Task<string> CompleteStreamingAsync(
+        List<ChatMessage> messages,
+        AgentExecutionTraceBuilder executionTrace)
     {
         StringBuilder fullReply = new();
-
-        await foreach (StreamingChatCompletionUpdate update in _client.CompleteChatStreamingAsync(messages))
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        try
         {
-            if (update.ContentUpdate.Count == 0)
+            await foreach (StreamingChatCompletionUpdate update in _client.CompleteChatStreamingAsync(messages))
             {
-                continue;
+                if (update.ContentUpdate.Count == 0)
+                {
+                    continue;
+                }
+
+                fullReply.Append(update.ContentUpdate[0].Text);
             }
 
-            fullReply.Append(update.ContentUpdate[0].Text);
+            executionTrace.RecordModelCall(
+                "main_agent_stream",
+                stopwatch.Elapsed,
+                completion: null);
+        }
+        catch (Exception exception)
+        {
+            executionTrace.RecordModelCall(
+                "main_agent_stream",
+                stopwatch.Elapsed,
+                completion: null,
+                exception);
+            throw;
         }
 
         return fullReply.ToString();
@@ -565,7 +729,8 @@ public sealed class AgentRunner
         AgentRunState runState,
         AgentToolResultLimiter toolResultLimiter,
         AgentToolTimeoutRunner toolTimeoutRunner,
-        KnowledgeCitationValidator citationValidator)
+        KnowledgeCitationValidator citationValidator,
+        AgentExecutionTraceBuilder executionTrace)
     {
         // 先把“模型要求调用工具”这条 assistant 消息加入上下文。
         // SDK 会保留 tool_call_id，下一条 ToolChatMessage 才能和它对上。
@@ -608,6 +773,7 @@ public sealed class AgentRunner
             AgentToolExecutionContext executionContext = new(runId, toolCall.Id);
             string rawResult;
             bool toolFailed = false;
+            Stopwatch toolStopwatch = Stopwatch.StartNew();
             try
             {
                 rawResult = await toolTimeoutRunner.RunAsync(
@@ -617,10 +783,17 @@ public sealed class AgentRunner
                         toolCall.FunctionArguments.ToString(),
                         executionContext,
                         cancellationToken));
+                executionTrace.RecordToolCall(
+                    toolCall.FunctionName,
+                    toolStopwatch.Elapsed);
             }
             catch (Exception exception) when (AgentToolErrorFormatter.IsRecoverable(exception))
             {
                 toolFailed = true;
+                executionTrace.RecordToolCall(
+                    toolCall.FunctionName,
+                    toolStopwatch.Elapsed,
+                    exception);
                 rawResult = AgentToolErrorFormatter.FormatRecoverableError(
                     toolCall.FunctionName,
                     exception);
@@ -633,6 +806,14 @@ public sealed class AgentRunner
                     $"Tool '{toolCall.FunctionName}' failed: {exception.Message}",
                     toolName: toolCall.FunctionName,
                     error: exception.Message);
+            }
+            catch (Exception exception)
+            {
+                executionTrace.RecordToolCall(
+                    toolCall.FunctionName,
+                    toolStopwatch.Elapsed,
+                    exception);
+                throw;
             }
 
             if (!toolFailed
@@ -1142,6 +1323,54 @@ public sealed class AgentRunner
         builder.AppendLine($"result: {AgentDebugPreviewBuilder.RedactSensitiveValues(result)}");
         builder.AppendLine("--- End debug local tool result ---");
         DebugMessageCreated?.Invoke(builder.ToString());
+    }
+
+    private async Task PublishExecutionTraceAsync(
+        AgentExecutionTraceBuilder executionTrace,
+        AgentRunOutcome outcome,
+        AgentWorkflowTrace workflowTrace,
+        AgentRunState runState)
+    {
+        if (ExecutionTraceCompletedAsync is null)
+        {
+            return;
+        }
+
+        AgentExecutionTrace trace = executionTrace.Build(
+            outcome,
+            runState.ToSnapshot(),
+            workflowTrace.Steps);
+        await ExecutionTraceCompletedAsync(trace);
+    }
+
+    private async Task PublishFailedExecutionTraceAsync(
+        AgentExecutionTraceBuilder executionTrace,
+        AgentWorkflowTrace workflowTrace,
+        AgentRunState runState,
+        Exception runException)
+    {
+        if (ExecutionTraceCompletedAsync is null)
+        {
+            return;
+        }
+
+        AgentExecutionTrace trace = executionTrace.Build(
+            outcome: null,
+            runState.ToSnapshot(),
+            workflowTrace.Steps,
+            runException);
+
+        try
+        {
+            await ExecutionTraceCompletedAsync(trace);
+        }
+        catch (Exception traceException)
+        {
+            throw new AggregateException(
+                "The agent run and execution trace persistence both failed.",
+                runException,
+                traceException);
+        }
     }
 
     private string BuildSystemInstructions()

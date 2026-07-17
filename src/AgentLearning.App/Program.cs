@@ -65,6 +65,9 @@ string endToEndRagBaselinePath = Path.Combine(
 string endToEndRagArtifactPath = AgentPathResolver.ResolveRuntimePath(
     AppContext.BaseDirectory,
     "memory/evaluation/e2e-rag-latest.json");
+string executionTracePath = AgentPathResolver.ResolveRuntimePath(
+    AppContext.BaseDirectory,
+    "memory/traces/agent-runs.jsonl");
 
 // 现在记忆会从本地 JSON 文件恢复；文件不存在时得到一个空记忆。
 ChatMemory memory = await ChatMemoryStore.LoadAsync(memoryPath);
@@ -120,6 +123,7 @@ AgentSkillRegistry skillRegistry = new([
 
 IAgentChatClient evaluationClient = new OpenAIChatClientAdapter(client);
 AgentRunner agentRunner = new(profile, evaluationClient, memory, memoryPath, skillRegistry);
+AgentExecutionTraceStore executionTraceStore = new(executionTracePath);
 EndToEndRagRegressionRunner endToEndRagRegressionRunner = new(
     new EndToEndRagEvaluator(skillRegistry, evaluationClient),
     endToEndRagEvaluationPath,
@@ -129,6 +133,7 @@ EndToEndRagRegressionRunner endToEndRagRegressionRunner = new(
     profile.EmbeddingModel);
 agentRunner.CheckpointCreatedAsync = checkpoint => SaveCheckpointAsync(checkpointPath, checkpoint, profile);
 agentRunner.CheckpointConsumedAsync = _ => AgentCheckpointStore.DeleteAsync(checkpointPath);
+agentRunner.ExecutionTraceCompletedAsync = executionTraceStore.AppendAsync;
 agentRunner.WorkflowStepCreated += step =>
 {
     if (profile.ShowWorkflowTrace)
@@ -157,6 +162,7 @@ Console.WriteLine($"Groundedness evaluation file: {groundednessEvaluationPath}")
 Console.WriteLine($"End-to-end RAG evaluation file: {endToEndRagEvaluationPath}");
 Console.WriteLine($"End-to-end RAG baseline file: {endToEndRagBaselinePath}");
 Console.WriteLine($"End-to-end RAG latest artifact: {endToEndRagArtifactPath}");
+Console.WriteLine($"Agent execution traces: {executionTraceStore.FilePath}");
 Console.WriteLine($"Embedding base URL: {profile.EmbeddingBaseUrl}");
 Console.WriteLine($"Embedding model: {profile.EmbeddingModel}");
 Console.WriteLine($"MCP server: {mcpServerAssemblyPath}");
@@ -561,6 +567,8 @@ static void PrintAgentRunResult(
     AgentProfile profile,
     bool printCompletedReply)
 {
+    Console.WriteLine($"Run ID: {result.RunId}");
+
     if (result.Outcome == AgentRunOutcome.WaitingForApproval)
     {
         AgentToolConfirmationRequest request = result.PendingApproval
