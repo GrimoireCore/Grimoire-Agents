@@ -1,7 +1,7 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 记录一次 Agent 运行里已经发生了几轮工具调用，用来防止工具循环失控。
+/// Counts tool-call rounds in one agent run to prevent uncontrolled loops.
 /// </summary>
 public sealed class AgentToolIterationGuard
 {

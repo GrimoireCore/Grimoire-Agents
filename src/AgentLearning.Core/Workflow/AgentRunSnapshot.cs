@@ -1,24 +1,24 @@
 namespace AgentLearning.Core.Workflow;
 
 /// <summary>
-/// Agent 运行状态的只读快照。
-/// 对外暴露快照而不是可变对象，可以避免 UI 或调用方误改状态机内部数据。
+/// Provides a read-only snapshot of agent run state.
+/// A snapshot prevents UI code or callers from mutating the internal state machine.
 /// </summary>
 public sealed record AgentRunSnapshot(
-    /// <summary>当前运行状态。</summary>
+    /// <summary>The current run status.</summary>
     AgentRunStatus Status,
 
-    /// <summary>这一轮已经请求主模型多少次。</summary>
+    /// <summary>The number of main-model requests in this run.</summary>
     int ModelRequestCount,
 
-    /// <summary>这一轮已经收到多少个工具调用请求。</summary>
+    /// <summary>The number of tool-call requests received in this run.</summary>
     int ToolCallCount,
 
-    /// <summary>最近一次涉及的工具名。</summary>
+    /// <summary>The most recently involved tool name.</summary>
     string? LastToolName,
 
-    /// <summary>当前是否正在等待用户确认工具调用。</summary>
+    /// <summary>Whether the run is waiting for user approval.</summary>
     bool WaitingForApproval,
 
-    /// <summary>最近一次错误信息。</summary>
+    /// <summary>The most recent error message.</summary>
     string? LastError);

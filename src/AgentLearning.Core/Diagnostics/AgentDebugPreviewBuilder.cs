@@ -7,8 +7,8 @@ using System.Text.RegularExpressions;
 namespace AgentLearning.Core.Diagnostics;
 
 /// <summary>
-/// 构建给学习和排查问题用的请求体预览。
-/// 注意：OpenAI SDK 会自己生成真实 HTTP 请求，这里打印的是等价的教学视图。
+/// Builds request previews for learning and troubleshooting.
+/// The OpenAI SDK creates the real HTTP request; this is an equivalent teaching view.
 /// </summary>
 public static class AgentDebugPreviewBuilder
 {
@@ -20,7 +20,7 @@ public static class AgentDebugPreviewBuilder
     };
 
     /// <summary>
-    /// 构建一次 Chat Completions 请求体预览。
+    /// Builds a preview of one Chat Completions request body.
     /// </summary>
     public static string BuildChatCompletionsRequestPreview(
         string model,
@@ -46,7 +46,7 @@ public static class AgentDebugPreviewBuilder
     }
 
     /// <summary>
-    /// 隐藏常见敏感值，避免调试输出把密钥打印到屏幕上。
+    /// Redacts common secrets so diagnostics do not print credentials.
     /// </summary>
     public static string RedactSensitiveValues(string text)
     {

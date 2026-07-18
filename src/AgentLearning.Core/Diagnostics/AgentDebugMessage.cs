@@ -1,20 +1,20 @@
 namespace AgentLearning.Core.Diagnostics;
 
 /// <summary>
-/// 调试视图里的 Chat Completions message。
-/// 这里不用 OpenAI SDK 类型，是为了让核心逻辑更容易测试。
+/// Represents a Chat Completions message in the diagnostic view.
+/// It avoids SDK types so the core logic remains easy to test.
 /// </summary>
 public sealed record AgentDebugMessage
 {
-    /// <summary>消息角色，例如 system、user、assistant、tool。</summary>
+    /// <summary>The message role, such as system, user, assistant, or tool.</summary>
     public required string Role { get; init; }
 
-    /// <summary>普通文本内容；工具调用消息可以为空。</summary>
+    /// <summary>Plain text content; tool-call messages may leave it empty.</summary>
     public string? Content { get; init; }
 
-    /// <summary>assistant 要求调用的工具列表。</summary>
+    /// <summary>Tools requested by the assistant.</summary>
     public IReadOnlyList<AgentDebugToolCall> ToolCalls { get; init; } = [];
 
-    /// <summary>tool 消息对应的 tool_call_id。</summary>
+    /// <summary>The tool_call_id associated with a tool message.</summary>
     public string? ToolCallId { get; init; }
 }

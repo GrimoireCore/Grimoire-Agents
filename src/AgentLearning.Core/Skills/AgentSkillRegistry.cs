@@ -1,8 +1,8 @@
 namespace AgentLearning.Core.Skills;
 
 /// <summary>
-/// 技能注册表。
-/// 它负责按名字找到技能并执行，避免 Program.cs 里写一大堆 switch。
+/// Registry for all skills available to the agent.
+/// It resolves and executes skills by name so Program.cs does not need a large switch.
 /// </summary>
 public sealed class AgentSkillRegistry
 {
@@ -13,10 +13,10 @@ public sealed class AgentSkillRegistry
         _skills = skills.ToDictionary(skill => skill.Name, StringComparer.Ordinal);
     }
 
-    /// <summary>所有可用技能。</summary>
+    /// <summary>All registered skills.</summary>
     public IReadOnlyCollection<IAgentSkill> Skills => _skills.Values;
 
-    /// <summary>按函数名取得技能元数据，找不到时抛出清晰错误。</summary>
+    /// <summary>Gets skill metadata by function name and throws a clear error when missing.</summary>
     public IAgentSkill GetRequiredSkill(string skillName)
     {
         if (!_skills.TryGetValue(skillName, out IAgentSkill? skill))
@@ -27,7 +27,7 @@ public sealed class AgentSkillRegistry
         return skill;
     }
 
-    /// <summary>按函数名执行技能。</summary>
+    /// <summary>Executes a skill by function name.</summary>
     public async Task<string> ExecuteAsync(
         string skillName,
         string argumentsJson,

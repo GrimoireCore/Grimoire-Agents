@@ -4,8 +4,8 @@ using System.Text.Json;
 namespace AgentLearning.Core.Skills;
 
 /// <summary>
-/// 简单计算器技能。
-/// 第一版只支持数字、括号、加减乘除，避免执行任意代码带来安全风险。
+/// Provides a small calculator skill.
+/// It supports numbers, parentheses, and basic arithmetic without executing arbitrary code.
 /// </summary>
 public sealed class CalculatorSkill : IAgentSkill
 {

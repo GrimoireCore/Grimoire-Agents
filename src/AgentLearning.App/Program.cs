@@ -8,16 +8,16 @@ using OpenAI.Chat;
 using System.ClientModel;
 using System.Text.Json;
 
-// AppContext.BaseDirectory 指向编译后的运行目录。
-// csproj 已经配置了复制 agent.json 和 agent.local.json，所以运行时能在这里找到配置文件。
+// AppContext.BaseDirectory points to the compiled application directory.
+// The project copies agent.json and agent.local.json there for runtime loading.
 string profilePath = Path.Combine(AppContext.BaseDirectory, "agent.json");
 string localProfilePath = Path.Combine(AppContext.BaseDirectory, "agent.local.json");
 
-// 读取 Agent 的角色设定、API 接线配置，以及本地私有密钥配置。
+// Load the agent role, API connection, and private local credentials.
 AgentProfile profile = await AgentProfileLoader.LoadFromFileAsync(profilePath, localProfilePath);
 
-// 优先使用 agent.local.json 里的 api_key。
-// 如果你临时不想写本地文件，也仍然可以用环境变量兜底。
+// Prefer api_key from agent.local.json.
+// An environment variable remains available for temporary local use.
 string? apiKey = profile.ApiKey ?? Environment.GetEnvironmentVariable(profile.EnvKey);
 if (string.IsNullOrWhiteSpace(apiKey))
 {
@@ -28,8 +28,8 @@ if (string.IsNullOrWhiteSpace(apiKey))
     return 1;
 }
 
-// ChatClient 对应你给的 curl 路径：POST /v1/chat/completions。
-// Endpoint 使用 https://router.hddev.top/v1，SDK 会在它后面拼接 /chat/completions。
+// ChatClient maps to the supplied curl route: POST /v1/chat/completions.
+// The SDK appends /chat/completions to the configured endpoint.
 ChatClient client = new(
     model: profile.Model,
     credential: new ApiKeyCredential(apiKey),
@@ -38,7 +38,7 @@ ChatClient client = new(
         Endpoint = new Uri(profile.BaseUrl)
     });
 
-// memory_file 可以写相对路径；这里把它解析成真正使用的文件路径。
+// Resolve a relative memory_file into the actual runtime path.
 string memoryPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, profile.MemoryFile);
 string notesPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, "memory/agent-notes.md");
 string checkpointPath = AgentPathResolver.ResolveRuntimePath(AppContext.BaseDirectory, "memory/pending-approval-checkpoint.json");
@@ -69,7 +69,7 @@ string executionTracePath = AgentPathResolver.ResolveRuntimePath(
     AppContext.BaseDirectory,
     "memory/traces/agent-runs.jsonl");
 
-// 现在记忆会从本地 JSON 文件恢复；文件不存在时得到一个空记忆。
+// Restore memory from local JSON, or start empty when the file is absent.
 ChatMemory memory = await ChatMemoryStore.LoadAsync(memoryPath);
 
 // The MCP client starts the standalone server as a child process over stdio.
@@ -113,8 +113,8 @@ await using McpSkillClient mcpSkillClient = await McpSkillClient.ConnectStdioAsy
     ],
     toolPolicies: mcpToolPolicies);
 
-// 注册当前 Agent 可以使用的技能。
-// 这一步只是把 C# 函数准备好，真正什么时候调用由模型决定。
+// Register the skills available to this agent.
+// Registration prepares C# functions; the model decides when to request them.
 AgentSkillRegistry skillRegistry = new([
     new TimeSkill(),
     new CalculatorSkill(),
@@ -211,13 +211,13 @@ while (true)
     Console.Write("You> ");
     string? input = Console.ReadLine();
 
-    // 输入 exit 就退出；这就是当前最简单的交互方式。
+    // Exit on the simplest supported console command.
     if (input is null || input.Equals("exit", StringComparison.OrdinalIgnoreCase))
     {
         break;
     }
 
-    // 空输入不调用模型，避免浪费一次请求。
+    // Skip empty input so it does not consume a model request.
     if (string.IsNullOrWhiteSpace(input))
     {
         continue;

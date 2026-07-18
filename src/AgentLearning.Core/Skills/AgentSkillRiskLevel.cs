@@ -1,20 +1,20 @@
 namespace AgentLearning.Core.Skills;
 
 /// <summary>
-/// 技能的风险等级。
-/// 等级越高，越不应该让模型在没有用户确认的情况下直接执行。
+/// Defines the risk level of a skill.
+/// Higher levels should not run without explicit user approval.
 /// </summary>
 public enum AgentSkillRiskLevel
 {
-    /// <summary>只读或纯计算，不会修改外部世界。</summary>
+    /// <summary>Read-only or pure computation that does not change external state.</summary>
     Low,
 
-    /// <summary>会写入本地文件、发送草稿、修改轻量状态等。</summary>
+    /// <summary>Writes local files, sends drafts, or changes low-impact state.</summary>
     Medium,
 
-    /// <summary>可能删除数据、调用外部系统、影响用户资产或业务状态。</summary>
+    /// <summary>May delete data, call external systems, or affect user or business state.</summary>
     High,
 
-    /// <summary>付款、下单、批量删除等必须强确认的动作。</summary>
+    /// <summary>Payments, purchases, bulk deletion, or other actions requiring strong confirmation.</summary>
     Critical
 }

@@ -19,14 +19,14 @@
 | [2](02-profile-and-api.md) | 角色设定、配置与 System Message | 2 tests |
 | [3](03-skills-and-tool-calling.md) | Skill 与原生 Tool Calling | 13 tests |
 | [4](04-memory-and-context.md) | Memory、上下文窗口与 Workflow | 24 tests |
-| [5](05-harness-react-state.md) | Agent Harness 与 ReAct 循环 | 24 tests |
-| [6](06-guardrails.md) | 循环、超时、异常与结果保护 | 51 tests |
-| [7](07-tool-router.md) | AI Tool Router 与工具筛选 | 58 tests |
-| [8](08-approval-and-checkpoint.md) | 人工确认、状态机与可恢复 Agent | 88 tests |
-| [9](09-mcp.md) | MCP Client、Server 与动态工具 | 104 tests |
-| [10](10-rag.md) | RAG、Embedding 与 Hybrid Search | 107 tests |
-| [11](11-rag-evaluation.md) | Grounding、引用与 RAG 评测 | 128 tests |
-| [12](12-observability.md) | 结构化 Trace 与可观察性 | 131 tests |
+| [5](05-harness-react-state.md) | Agent Harness 与 ReAct 循环 | 25 tests |
+| [6](06-guardrails.md) | 循环、超时、异常与结果保护 | 52 tests |
+| [7](07-tool-router.md) | AI Tool Router 与工具筛选 | 59 tests |
+| [8](08-approval-and-checkpoint.md) | 人工确认、状态机与可恢复 Agent | 89 tests |
+| [9](09-mcp.md) | MCP Client、Server 与动态工具 | 105 tests |
+| [10](10-rag.md) | RAG、Embedding 与 Hybrid Search | 108 tests |
+| [11](11-rag-evaluation.md) | Grounding、引用与 RAG 评测 | 129 tests |
+| [12](12-observability.md) | 结构化 Trace 与可观察性 | 132 tests |
 
 ## 最终成果
 

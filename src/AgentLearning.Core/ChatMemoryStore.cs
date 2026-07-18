@@ -5,8 +5,8 @@ using System.Text.Json.Serialization;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 把聊天记忆保存到本地 JSON 文件。
-/// 这一层只负责读写文件，不负责决定什么内容值得记住。
+/// Persists chat memory in a local JSON file.
+/// This layer only performs file I/O; it does not decide what is worth remembering.
 /// </summary>
 public static class ChatMemoryStore
 {
@@ -18,7 +18,7 @@ public static class ChatMemoryStore
     };
 
     /// <summary>
-    /// 从 JSON 文件加载记忆；文件不存在时返回空记忆。
+    /// Loads memory from JSON, returning empty memory when the file does not exist.
     /// </summary>
     public static async Task<ChatMemory> LoadAsync(
         string filePath,
@@ -50,7 +50,7 @@ public static class ChatMemoryStore
     }
 
     /// <summary>
-    /// 把当前记忆保存到 JSON 文件。
+    /// Saves the current memory to a JSON file.
     /// </summary>
     public static async Task SaveAsync(
         string filePath,

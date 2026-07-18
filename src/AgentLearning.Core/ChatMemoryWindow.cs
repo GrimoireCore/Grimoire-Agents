@@ -1,8 +1,8 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 从完整聊天记忆里选择本次要发给模型的上下文窗口。
-/// 完整历史仍然保存在 ChatMemory 里，这里只控制“发多少给模型”。
+/// Selects the context window to send from the complete chat memory.
+/// ChatMemory retains the full history; this class only limits each request.
 /// </summary>
 public static class ChatMemoryWindow
 {
@@ -23,8 +23,8 @@ public static class ChatMemoryWindow
             .Skip(turns.Count - maxTurns)
             .ToArray();
 
-        // 如果窗口从旧的 assistant 回复开始，说明它前面的 user 问题已经被裁掉了。
-        // 丢掉这条孤立回复，避免模型看到没有上下文的半截对话。
+        // If the window starts with an old assistant reply, its user prompt was trimmed.
+        // Remove the orphaned reply so the model does not receive half a conversation.
         if (window.Length > 0 && window[0].Role == ChatRole.Assistant)
         {
             return window.Skip(1).ToArray();

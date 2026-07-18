@@ -1,7 +1,7 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 限制工具结果正文长度，避免一次工具调用把太多内容塞回模型上下文。
+/// Limits tool-result text so one call cannot flood the model context.
 /// </summary>
 public sealed class AgentToolResultLimiter
 {

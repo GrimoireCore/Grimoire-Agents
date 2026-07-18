@@ -1,8 +1,8 @@
 namespace AgentLearning.Core.Workflow;
 
 /// <summary>
-/// 一次用户请求对应的一条 Agent 工作流轨迹。
-/// 它帮助我们学习 Agent 实际经历了哪些可观察步骤。
+/// Represents the workflow trace for one user request.
+/// It reveals the observable steps the agent actually performed.
 /// </summary>
 public sealed class AgentWorkflowTrace
 {

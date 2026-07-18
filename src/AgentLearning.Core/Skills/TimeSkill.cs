@@ -1,8 +1,8 @@
 namespace AgentLearning.Core.Skills;
 
 /// <summary>
-/// 返回当前时间的技能。
-/// 这是最容易理解的 Tool Calling 示例：模型问时间，C# 代码提供真实时间。
+/// Returns the current time.
+/// This is a simple tool-calling example: the model asks, and C# supplies real data.
 /// </summary>
 public sealed class TimeSkill : IAgentSkill
 {

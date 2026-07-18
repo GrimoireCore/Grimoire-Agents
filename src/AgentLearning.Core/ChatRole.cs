@@ -1,14 +1,14 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 对话消息的角色。
-/// 模型需要靠这个区分“用户说的话”和“助手说的话”。
+/// Identifies the role of a chat message.
+/// The model uses this value to distinguish user input from assistant replies.
 /// </summary>
 public enum ChatRole
 {
-    /// <summary>用户输入。</summary>
+    /// <summary>A message written by the user.</summary>
     User,
 
-    /// <summary>Agent 回复。</summary>
+    /// <summary>A reply written by the agent.</summary>
     Assistant
 }

@@ -3,12 +3,12 @@ using AgentLearning.Core.Diagnostics;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 把调试消息转换成可持久化的 Checkpoint 消息。
-/// 调试消息面向人类预览；Checkpoint 消息面向恢复运行。
+/// Converts diagnostic messages into persistable checkpoint messages.
+/// Diagnostic messages target human preview; checkpoint messages target resumed execution.
 /// </summary>
 public static class AgentCheckpointMessageBuilder
 {
-    /// <summary>从当前请求消息快照创建 Checkpoint 消息列表。</summary>
+    /// <summary>Creates checkpoint messages from the current request snapshot.</summary>
     public static IReadOnlyList<AgentCheckpointMessage> FromDebugMessages(
         IReadOnlyList<AgentDebugMessage> debugMessages)
     {

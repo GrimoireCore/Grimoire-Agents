@@ -1,8 +1,8 @@
 namespace AgentLearning.Core.Workflow;
 
 /// <summary>
-/// Agent 工作流中的一步。
-/// Number 用来显示顺序，Kind 用来表达这一步属于哪类动作。
+/// Represents one step in an agent workflow.
+/// Number preserves order, and Kind identifies the action category.
 /// </summary>
 public sealed record AgentWorkflowStep(
     int Number,

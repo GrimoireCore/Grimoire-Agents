@@ -4,13 +4,13 @@ using System.Text.Json;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 解析并校验 AI Tool Router 返回的 JSON。
-/// 模型负责语义选择；这里负责确认结果是否满足工程边界。
+/// Parses and validates JSON returned by AI Tool Router.
+/// The model makes the semantic choice; this code enforces engineering boundaries.
 /// </summary>
 public static class AgentToolRoutingDecisionParser
 {
     /// <summary>
-    /// 解析 Router JSON，并确认工具名真实存在、数量没有超过限制。
+    /// Parses router JSON and validates tool names and the selection limit.
     /// </summary>
     public static AgentToolRoutingDecision Parse(
         string routerJson,

@@ -1,8 +1,8 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// Tool Router 返回了无法信任的选择结果。
-/// 这里选择直接暴露错误，而不是偷偷回退到“发送全部工具”。
+/// Indicates that Tool Router returned an untrusted selection.
+/// The host exposes this error instead of silently falling back to every tool.
 /// </summary>
 public sealed class AgentToolRoutingException : InvalidOperationException
 {

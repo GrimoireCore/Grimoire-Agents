@@ -1,7 +1,7 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 在限定时间内执行工具，避免某个工具卡住后让 Agent 一直等待。
+/// Runs a tool within a time limit so a stalled tool cannot block the agent forever.
 /// </summary>
 public sealed class AgentToolTimeoutRunner
 {

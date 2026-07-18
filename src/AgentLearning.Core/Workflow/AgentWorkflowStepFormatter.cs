@@ -1,7 +1,7 @@
 namespace AgentLearning.Core.Workflow;
 
 /// <summary>
-/// 把工作流步骤格式化成控制台里容易读的一行文字。
+/// Formats a workflow step as a readable console line.
 /// </summary>
 public static class AgentWorkflowStepFormatter
 {

@@ -5,8 +5,8 @@ using System.Text.Json.Serialization;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 把 Agent Checkpoint 保存到本地 JSON 文件。
-/// 这是教学版实现；真实系统里通常会换成数据库、Redis 或队列。
+/// Persists agent checkpoints in a local JSON file.
+/// Production systems commonly replace this teaching implementation with durable storage.
 /// </summary>
 public static class AgentCheckpointStore
 {
@@ -18,7 +18,7 @@ public static class AgentCheckpointStore
         Converters = { new JsonStringEnumConverter() }
     };
 
-    /// <summary>从文件读取 Checkpoint。文件不存在时返回 null。</summary>
+    /// <summary>Loads a checkpoint, returning null when the file does not exist.</summary>
     public static async Task<AgentRunCheckpoint?> LoadAsync(
         string filePath,
         CancellationToken cancellationToken = default)
@@ -35,7 +35,7 @@ public static class AgentCheckpointStore
             cancellationToken);
     }
 
-    /// <summary>把 Checkpoint 保存到文件，必要时自动创建目录。</summary>
+    /// <summary>Saves a checkpoint and creates its directory when necessary.</summary>
     public static async Task SaveAsync(
         string filePath,
         AgentRunCheckpoint checkpoint,
@@ -53,7 +53,7 @@ public static class AgentCheckpointStore
         await JsonSerializer.SerializeAsync(stream, checkpoint, JsonOptions, cancellationToken);
     }
 
-    /// <summary>删除 Checkpoint 文件。文件不存在时什么也不做。</summary>
+    /// <summary>Deletes a checkpoint file and does nothing when it is absent.</summary>
     public static Task DeleteAsync(string filePath)
     {
         if (File.Exists(filePath))

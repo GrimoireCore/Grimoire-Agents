@@ -1,8 +1,8 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 解析配置里的文件路径。
-/// 相对路径基于程序运行目录，绝对路径保持原样。
+/// Resolves file paths from configuration.
+/// Relative paths use the process working directory; absolute paths remain unchanged.
 /// </summary>
 public static class AgentPathResolver
 {

@@ -3,19 +3,19 @@ using System.Text.Json;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 负责从 JSON 文件读取 Agent 配置，并做最基本的校验。
+/// Loads agent configuration from JSON and performs basic validation.
 /// </summary>
 public static class AgentProfileLoader
 {
-    // 允许 JSON 里的 name/model 等字段大小写不敏感。
-    // base_url/env_key/wire_api 这种下划线字段通过 AgentProfile 上的 JsonPropertyName 映射。
+    // Allow case-insensitive property names such as name and model.
+    // JsonPropertyName maps underscore-separated fields such as base_url and env_key.
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
     /// <summary>
-    /// 从指定路径读取 Agent 配置。
+    /// Loads agent configuration from the specified path.
     /// </summary>
     public static async Task<AgentProfile> LoadFromFileAsync(
         string filePath,
@@ -25,8 +25,8 @@ public static class AgentProfileLoader
     }
 
     /// <summary>
-    /// 从主配置和本地私有配置读取 Agent 配置。
-    /// 主配置放公开信息，本地配置只放 api_key。
+    /// Loads agent configuration from shared and private local files.
+    /// Shared settings belong in the main file; only api_key belongs in the local file.
     /// </summary>
     public static async Task<AgentProfile> LoadFromFileAsync(
         string filePath,
@@ -86,7 +86,7 @@ public static class AgentProfileLoader
             : profile with { ApiKey = profile.ApiKey.Trim() };
     }
 
-    // 配置缺失时直接抛出清晰错误，不用默认值偷偷掩盖问题。
+    // Missing required settings produce clear errors instead of hidden defaults.
     private static void Validate(AgentProfile profile)
     {
         RequireValue(profile.Name, "name");

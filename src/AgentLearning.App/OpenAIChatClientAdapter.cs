@@ -3,8 +3,8 @@ using OpenAI.Chat;
 namespace AgentLearning.App;
 
 /// <summary>
-/// 把 OpenAI SDK 的 ChatClient 包装成 AgentRunner 需要的模型客户端接口。
-/// 这样 AgentRunner 不直接依赖不可替换的 SDK 客户端，测试时更容易控制模型返回。
+/// Adapts the OpenAI SDK ChatClient to the interface required by AgentRunner.
+/// This keeps the runner replaceable and makes model responses controllable in tests.
 /// </summary>
 public sealed class OpenAIChatClientAdapter : IAgentChatClient
 {

@@ -1,8 +1,8 @@
 namespace AgentLearning.Core.Workflow;
 
 /// <summary>
-/// Agent 工作流里可以被观察到的步骤类型。
-/// 这里记录的是外部行为，不记录模型隐藏思考。
+/// Identifies observable step types in an agent workflow.
+/// These steps record external behavior, never hidden model reasoning.
 /// </summary>
 public enum AgentWorkflowStepKind
 {

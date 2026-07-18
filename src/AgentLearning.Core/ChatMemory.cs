@@ -1,19 +1,19 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 当前会话里的聊天记忆。
-/// 这个类只负责在内存中维护顺序，保存到文件由 ChatMemoryStore 负责。
+/// Stores the chat memory for the current conversation.
+/// This class maintains in-memory order; ChatMemoryStore handles persistence.
 /// </summary>
 public sealed class ChatMemory
 {
-    // 内部用 List 保存，因为对话会一轮一轮追加。
+    // A list is appropriate because turns are appended in sequence.
     private readonly List<ChatTurn> _turns = [];
 
-    // 对外只暴露只读视图，避免外部代码随便改乱记忆顺序。
+    // Expose a read-only view so callers cannot corrupt the message order.
     public IReadOnlyList<ChatTurn> Turns => _turns;
 
     /// <summary>
-    /// 保存用户说的话。
+    /// Stores a message written by the user.
     /// </summary>
     public void AddUserMessage(string content)
     {
@@ -21,14 +21,14 @@ public sealed class ChatMemory
     }
 
     /// <summary>
-    /// 保存 Agent 回复的话。
+    /// Stores a reply written by the agent.
     /// </summary>
     public void AddAssistantMessage(string content)
     {
         Add(ChatRole.Assistant, content);
     }
 
-    // 统一入口负责校验和去掉首尾空格。
+    // Keep validation and whitespace normalization in one entry point.
     private void Add(ChatRole role, string content)
     {
         if (string.IsNullOrWhiteSpace(content))

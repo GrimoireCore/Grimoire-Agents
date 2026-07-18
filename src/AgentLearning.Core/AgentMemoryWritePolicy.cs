@@ -1,8 +1,8 @@
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 判断一段内容是否适合写入长期记忆。
-/// 当前用户输入仍然会参与本轮模型调用；这里只控制“要不要保存到下一轮还能看到的记忆里”。
+/// Decides whether content is suitable for long-term memory.
+/// The current input still reaches the model; this policy only controls future retention.
 /// </summary>
 public sealed class AgentMemoryWritePolicy
 {

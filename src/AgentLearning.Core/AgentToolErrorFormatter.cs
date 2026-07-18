@@ -4,8 +4,8 @@ using System.Text.Json;
 namespace AgentLearning.Core;
 
 /// <summary>
-/// 把可恢复的工具异常转换成模型可以观察到的 tool result。
-/// 这样模型可以基于错误向用户解释，或修正参数后再次调用工具。
+/// Converts recoverable tool exceptions into tool results the model can observe.
+/// The model can then explain the error or retry with corrected arguments.
 /// </summary>
 public static class AgentToolErrorFormatter
 {

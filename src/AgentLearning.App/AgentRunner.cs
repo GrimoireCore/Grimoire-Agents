@@ -9,8 +9,8 @@ using System.Text;
 namespace AgentLearning.App;
 
 /// <summary>
-/// Agent 的运行骨架。
-/// 它把“记忆、上下文、模型调用、工具调用、工具观察、最终回答”放进一个可控循环里。
+/// Implements the agent runtime harness.
+/// It controls memory, context, model calls, tools, observations, and the final answer.
 /// </summary>
 public sealed class AgentRunner
 {
@@ -46,13 +46,13 @@ public sealed class AgentRunner
         _skillRegistry = skillRegistry;
     }
 
-    /// <summary>创建工作流步骤时触发，Program.cs 可以选择打印到控制台。</summary>
+    /// <summary>Raised for each workflow step so Program.cs can display it.</summary>
     public event Action<AgentWorkflowStep>? WorkflowStepCreated;
 
-    /// <summary>创建调试文本时触发，Program.cs 可以选择打印到控制台。</summary>
+    /// <summary>Raised for diagnostic text so Program.cs can display it.</summary>
     public event Action<string>? DebugMessageCreated;
 
-    /// <summary>Agent 运行状态变化时触发，Program.cs 可以选择展示给用户或 UI。</summary>
+    /// <summary>Raised when run state changes so a console or UI can observe it.</summary>
     public event Action<AgentRunSnapshot>? StateChanged;
 
     /// <summary>Raised when the runner creates or updates a checkpoint.</summary>
@@ -65,8 +65,8 @@ public sealed class AgentRunner
     public Func<AgentExecutionTrace, Task>? ExecutionTraceCompletedAsync { get; set; }
 
     /// <summary>
-    /// 运行一轮 Agent。
-    /// 这里是 Harness 的核心：模型可以决定调用工具，但循环边界和记忆保存由代码控制。
+    /// Runs one agent turn.
+    /// The model chooses tools, while the harness controls loop boundaries and persistence.
     /// </summary>
     public async Task<AgentRunResult> RunAsync(string userInput)
     {
@@ -378,8 +378,8 @@ public sealed class AgentRunner
         AgentRunState runState,
         AgentExecutionTraceBuilder executionTrace)
     {
-        // native_tool_calling 打开时，先让 AI Tool Router 从轻量目录里选工具。
-        // 主 Agent 只会收到被选中的工具完整 Schema。
+        // When native tool calling is enabled, route over the lightweight catalog first.
+        // The main agent receives full schemas only for selected tools.
         IReadOnlyList<IAgentSkill> selectedSkills = await SelectSkillsForCurrentTurnAsync(
             userInput,
             workflowTrace,
@@ -433,8 +433,8 @@ public sealed class AgentRunner
                 executionTrace);
             EmitChatResponsePreview(completion);
 
-            // 有些 OpenAI-compatible Router 会返回 tool_calls，但 finish_reason 仍然是 stop。
-            // 所以这里优先看 ToolCalls 本身，避免漏掉真正的工具调用请求。
+            // Some compatible routers return tool_calls while finish_reason remains stop.
+            // Inspect ToolCalls directly so genuine requests are not missed.
             if (completion.ToolCalls.Count > 0)
             {
                 if (!_profile.NativeToolCalling)
@@ -732,8 +732,8 @@ public sealed class AgentRunner
         KnowledgeCitationValidator citationValidator,
         AgentExecutionTraceBuilder executionTrace)
     {
-        // 先把“模型要求调用工具”这条 assistant 消息加入上下文。
-        // SDK 会保留 tool_call_id，下一条 ToolChatMessage 才能和它对上。
+        // Add the assistant's tool request to context before the observation.
+        // The SDK preserves tool_call_id so the following ToolChatMessage can match it.
         messages.Add(new AssistantChatMessage(completion));
         debugMessages.Add(new AgentDebugMessage
         {
@@ -842,7 +842,7 @@ public sealed class AgentRunner
 
             EmitToolResultPreview(toolCall, result);
 
-            // 这条消息相当于告诉模型：你刚才要的工具结果在这里。
+            // This message tells the model that the requested tool result is available.
             messages.Add(new ToolChatMessage(toolCall.Id, result));
             debugMessages.Add(new AgentDebugMessage
             {
@@ -941,7 +941,7 @@ public sealed class AgentRunner
     {
         List<ChatMessage> messages =
         [
-            // system message 是角色设定：它告诉模型“你是谁、该怎么回答”。
+            // The system message defines who the agent is and how it should respond.
             new SystemChatMessage(BuildSystemInstructions())
         ];
 
